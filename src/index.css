@@ -1,0 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 6% 7%;
+    --foreground: 220 20% 92%;
+
+    --card: 240 6% 10%;
+    --card-foreground: 220 20% 92%;
+
+    --popover: 240 6% 10%;
+    --popover-foreground: 220 20% 92%;
+
+    --primary: 270 80% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 8% 14%;
+    --secondary-foreground: 220 20% 85%;
+
+    --muted: 240 6% 16%;
+    --muted-foreground: 220 10% 55%;
+
+    --accent: 200 90% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 18%;
+    --input: 240 6% 18%;
+    --ring: 270 80% 60%;
+
+    --radius: 0.75rem;
+
+    /* Custom neon tokens */
+    --neon-purple: 270 80% 60%;
+    --neon-blue: 210 100% 60%;
+    --neon-pink: 330 85% 60%;
+    --neon-green: 145 80% 50%;
+
+    --glass-bg: 240 6% 12%;
+    --glass-border: 240 6% 22%;
+
+    --sidebar-background: 240 6% 9%;
+    --sidebar-foreground: 220 20% 85%;
+    --sidebar-primary: 270 80% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 6% 14%;
+    --sidebar-accent-foreground: 220 20% 92%;
+    --sidebar-border: 240 6% 16%;
+    --sidebar-ring: 270 80% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-glass/60 backdrop-blur-xl border border-glass-border;
+  }
+  .neon-glow-purple {
+    box-shadow: 0 0 15px hsl(var(--neon-purple) / 0.3), 0 0 45px hsl(var(--neon-purple) / 0.1);
+  }
+  .neon-glow-blue {
+    box-shadow: 0 0 15px hsl(var(--neon-blue) / 0.3), 0 0 45px hsl(var(--neon-blue) / 0.1);
+  }
+  .neon-glow-pink {
+    box-shadow: 0 0 15px hsl(var(--neon-pink) / 0.3), 0 0 45px hsl(var(--neon-pink) / 0.1);
+  }
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--neon-purple)), hsl(var(--neon-blue)), hsl(var(--neon-pink)));
+  }
+  .gradient-border {
+    border-image: linear-gradient(135deg, hsl(var(--neon-purple)), hsl(var(--neon-blue))) 1;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 999px;
+  }
+}
