@@ -60,7 +60,7 @@ const AuthPage = () => {
           <motion.div
             whileHover={{ rotate: 180 }}
             transition={{ duration: 0.4 }}
-            className="w-14 h-14 rounded-2xl bg-gradient-to-br from-neon-purple to-neon-blue flex items-center justify-center neon-glow-purple mx-auto mb-4"
+            className="w-14 h-14 rounded-2xl bg-neon-purple flex items-center justify-center neon-glow-purple mx-auto mb-4"
           >
             <Code2 className="w-7 h-7 text-primary-foreground" />
           </motion.div>
@@ -75,7 +75,7 @@ const AuthPage = () => {
             <button
               onClick={() => { setIsLogin(true); setError(""); }}
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                isLogin ? "bg-gradient-to-r from-neon-purple to-neon-blue text-primary-foreground neon-glow-purple" : "text-muted-foreground"
+                isLogin ? "bg-neon-purple text-primary-foreground neon-glow-purple" : "text-muted-foreground"
               }`}
             >
               Sign In
@@ -83,7 +83,7 @@ const AuthPage = () => {
             <button
               onClick={() => { setIsLogin(false); setError(""); }}
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                !isLogin ? "bg-gradient-to-r from-neon-purple to-neon-blue text-primary-foreground neon-glow-purple" : "text-muted-foreground"
+                !isLogin ? "bg-neon-purple text-primary-foreground neon-glow-purple" : "text-muted-foreground"
               }`}
             >
               Sign Up
@@ -152,7 +152,7 @@ const AuthPage = () => {
               whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={loading}
-              className="w-full h-11 rounded-xl bg-gradient-to-r from-neon-purple to-neon-blue text-primary-foreground font-medium text-sm flex items-center justify-center gap-2 neon-glow-purple disabled:opacity-50 transition-all"
+              className="w-full h-11 rounded-xl bg-neon-purple text-primary-foreground font-medium text-sm flex items-center justify-center gap-2 neon-glow-purple disabled:opacity-50 transition-all"
             >
               {loading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

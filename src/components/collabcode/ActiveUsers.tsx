@@ -8,11 +8,11 @@ interface User {
 }
 
 const mockUsers: User[] = [
-  { name: "You", color: "from-neon-purple to-neon-blue", status: "online", avatar: "Y" },
-  { name: "Sarah K.", color: "from-neon-pink to-neon-purple", status: "online", avatar: "S" },
-  { name: "Alex M.", color: "from-neon-blue to-accent", status: "online", avatar: "A" },
-  { name: "Jordan L.", color: "from-neon-green to-neon-blue", status: "idle", avatar: "J" },
-  { name: "Casey R.", color: "from-muted-foreground to-muted", status: "offline", avatar: "C" },
+  { name: "You", color: "bg-neon-purple", status: "online", avatar: "Y" },
+  { name: "Sarah K.", color: "bg-neon-pink", status: "online", avatar: "S" },
+  { name: "Alex M.", color: "bg-neon-blue", status: "online", avatar: "A" },
+  { name: "Jordan L.", color: "bg-neon-green", status: "idle", avatar: "J" },
+  { name: "Casey R.", color: "bg-muted-foreground", status: "offline", avatar: "C" },
 ];
 
 const statusColors: Record<string, string> = {
@@ -36,7 +36,7 @@ const ActiveUsers = () => {
           >
             <div className="relative">
               <div
-                className={`w-7 h-7 rounded-full bg-gradient-to-br ${user.color} flex items-center justify-center text-xs font-semibold text-primary-foreground ${
+                className={`w-7 h-7 rounded-full ${user.color} flex items-center justify-center text-xs font-semibold text-primary-foreground ${
                   user.status === "online" ? "ring-2 ring-neon-green/30 animate-pulse-neon" : ""
                 }`}
               >

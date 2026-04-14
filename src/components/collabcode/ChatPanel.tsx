@@ -63,7 +63,7 @@ const ChatPanel = () => {
           />
           <motion.button
             whileTap={{ scale: 0.9 }}
-            className="w-8 h-8 rounded-lg bg-gradient-to-r from-neon-purple to-neon-blue flex items-center justify-center text-primary-foreground"
+            className="w-8 h-8 rounded-lg bg-neon-purple flex items-center justify-center text-primary-foreground"
           >
             <Send className="w-3.5 h-3.5" />
           </motion.button>

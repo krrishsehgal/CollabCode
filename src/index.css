@@ -79,11 +79,11 @@
     box-shadow: 0 0 15px hsl(var(--neon-pink) / 0.3), 0 0 45px hsl(var(--neon-pink) / 0.1);
   }
   .gradient-text {
-    @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, hsl(var(--neon-purple)), hsl(var(--neon-blue)), hsl(var(--neon-pink)));
+    @apply text-neon-purple;
   }
   .gradient-border {
-    border-image: linear-gradient(135deg, hsl(var(--neon-purple)), hsl(var(--neon-blue))) 1;
+    border-image: none;
+    border-color: hsl(var(--neon-purple));
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 4px;

@@ -95,7 +95,7 @@ const CodeEditor = ({
           </button>
           <motion.button
             whileTap={{ scale: 0.95 }}
-            className="h-7 px-4 rounded-lg bg-gradient-to-r from-neon-green/80 to-neon-green text-background text-xs font-medium flex items-center gap-1.5"
+            className="h-7 px-4 rounded-lg bg-neon-green/80 text-background text-xs font-medium flex items-center gap-1.5"
           >
             <Play className="w-3 h-3" /> Run
           </motion.button>
