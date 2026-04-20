@@ -42,7 +42,7 @@ const RoomPage = () => {
           <motion.div
             whileHover={{ rotate: 180 }}
             transition={{ duration: 0.4 }}
-            className="w-14 h-14 rounded-2xl bg-gradient-to-br from-neon-purple to-neon-blue flex items-center justify-center neon-glow-purple mx-auto mb-4"
+            className="w-14 h-14 rounded-2xl bg-neon-purple flex items-center justify-center neon-glow-purple mx-auto mb-4"
           >
             <Code2 className="w-7 h-7 text-primary-foreground" />
           </motion.div>
@@ -71,7 +71,7 @@ const RoomPage = () => {
               whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={loading || !roomCode.trim()}
-              className="w-full h-11 rounded-xl bg-gradient-to-r from-neon-purple to-neon-blue text-primary-foreground font-medium text-sm flex items-center justify-center gap-2 neon-glow-purple disabled:opacity-50 transition-all"
+              className="w-full h-11 rounded-xl bg-neon-purple text-primary-foreground font-medium text-sm flex items-center justify-center gap-2 neon-glow-purple disabled:opacity-50 transition-all"
             >
               {loading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
