@@ -8,9 +8,9 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
-// In-memory room structure: roomId -> [userId1, userId2, ...]
-const rooms = {};
-// Track socket to user mapping: socketId -> { userId, roomId }
+// In-memory room structure: roomId -> [{ userId, displayName }]
+const roomUsers = {};
+// Track socket to user mapping: socketId -> { userId, displayName, roomId }
 const socketUsers = {};
 
 // Enable CORS for frontend
@@ -41,24 +41,49 @@ io.on("connection", (socket) => {
 
   // Handle join-room event
   socket.on("join-room", (data) => {
-    const { roomId, userId } = data;
+    const { roomId, userId, displayName } = data;
 
     // Add socket to room
     socket.join(roomId);
 
-    // Initialize room if it doesn't exist
-    if (!rooms[roomId]) {
-      rooms[roomId] = [];
+    // Initialize room user list if it doesn't exist
+    if (!roomUsers[roomId]) {
+      roomUsers[roomId] = [];
     }
 
-    // Add user to room
-    rooms[roomId].push(userId);
-    socketUsers[socket.id] = { userId, roomId };
+    // Add user to room if not already present
+    if (!roomUsers[roomId].some((user) => user.userId === userId)) {
+      roomUsers[roomId].push({ userId, displayName });
+    } else {
+      roomUsers[roomId] = roomUsers[roomId].map((user) =>
+        user.userId === userId ? { userId, displayName } : user
+      );
+    }
+    socketUsers[socket.id] = { userId, displayName, roomId };
 
     console.log(`User ${userId} joined room ${roomId}`);
 
-    // Broadcast to others in the room
-    socket.to(roomId).emit("user-joined", { userId });
+    // Broadcast active users in this room
+    io.to(roomId).emit("users-updated", { users: roomUsers[roomId] });
+  });
+
+  // Handle collaborative code changes
+  socket.on("code-change", (data) => {
+    const { roomId, fileName, code } = data;
+    socket.to(roomId).emit("code-update", { fileName, code });
+  });
+
+  // Handle collaborative file creation
+  socket.on("file-created", (data) => {
+    const { roomId, fileName } = data;
+    socket.to(roomId).emit("file-created", fileName);
+    console.log(`File created: ${fileName} in room ${roomId}`);
+  });
+
+  // Handle chat messages
+  socket.on("send-message", (data) => {
+    const { roomId, userId, displayName, message } = data;
+    io.to(roomId).emit("receive-message", { userId, displayName, message });
   });
 
   // Handle disconnect
@@ -67,18 +92,18 @@ io.on("connection", (socket) => {
 
     if (userData) {
       const { userId, roomId } = userData;
-
+      
       // Remove user from room
-      if (rooms[roomId]) {
-        rooms[roomId] = rooms[roomId].filter((id) => id !== userId);
+      if (roomUsers[roomId]) {
+        roomUsers[roomId] = roomUsers[roomId].filter((user) => user.userId !== userId);
+
+        // Broadcast active users in this room
+        io.to(roomId).emit("users-updated", { users: roomUsers[roomId] });
 
         // Clean up empty room
-        if (rooms[roomId].length === 0) {
-          delete rooms[roomId];
+        if (roomUsers[roomId].length === 0) {
+          delete roomUsers[roomId];
         }
-
-        // Broadcast to others in the room
-        io.to(roomId).emit("user-left", { userId });
 
         console.log(`User ${userId} left room ${roomId}`);
       }

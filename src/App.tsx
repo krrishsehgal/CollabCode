@@ -4,7 +4,6 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { useSocket } from "@/hooks/useSocket";
 import AuthPage from "./pages/AuthPage";
 import RoomPage from "./pages/RoomPage";
 import Index from "./pages/Index";
@@ -27,13 +26,6 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 const AppContent = () => {
-  const { user } = useAuth();
-  // Initialize socket connection with current user
-  useSocket({
-    roomId: "room-123",
-    userId: user?.id || "anonymous",
-  });
-
   return (
     <Routes>
       <Route

@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { useSocket } from "@/hooks/useSocket";
+import { useParams } from "react-router-dom";
 
 export const SocketExample = () => {
+  const { roomId } = useParams();
   const socket = useSocket({
-    roomId: "room-123",
+    roomId,
     userId: "current-user-id", // Replace with actual user ID from your auth context/state
+    displayName: "Current User", // Replace with actual display name from your auth context/state
   });
   const [isConnected, setIsConnected] = useState(false);
 
