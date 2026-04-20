@@ -8,8 +8,7 @@ const createRoomId = () =>
   `${Math.random().toString(36).slice(2, 6)}-${Math.random().toString(36).slice(2, 6)}`;
 
 const AuthPage = () => {
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState("");
+  const [isLogin, setIsLogin] = useState(true);  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
