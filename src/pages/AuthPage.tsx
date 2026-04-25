@@ -4,6 +4,9 @@ import { Code2, Mail, Lock, User, ArrowRight, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useNavigate } from "react-router-dom";
 
+const createRoomId = () =>
+  `${Math.random().toString(36).slice(2, 6)}-${Math.random().toString(36).slice(2, 6)}`;
+
 const AuthPage = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
@@ -22,7 +25,7 @@ const AuthPage = () => {
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        setTimeout(() => navigate("/room"), 100);
+        navigate(`/editor/${createRoomId()}`);
       } else {
         const { error } = await supabase.auth.signUp({
           email,
@@ -33,7 +36,7 @@ const AuthPage = () => {
           },
         });
         if (error) throw error;
-        setTimeout(() => navigate("/room"), 100);
+        navigate(`/editor/${createRoomId()}`);
       }
     } catch (err: any) {
       setError(err.message);
