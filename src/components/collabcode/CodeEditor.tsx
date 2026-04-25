@@ -1,63 +1,8 @@
-import { ChevronDown, Copy, Play, X } from "lucide-react";
+import { ChevronDown, Copy, Play, X, Save } from "lucide-react";
 import { motion } from "framer-motion";
-
-const mockCode = `import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-
-interface CollabSession {
-  id: string;
-  participants: User[];
-  code: string;
-  language: string;
-}
-
-const CollaborativeEditor: React.FC = () => {
-  const [session, setSession] = useState<CollabSession | null>(null);
-  const [connected, setConnected] = useState(false);
-
-  useEffect(() => {
-    // Connect to WebSocket server
-    const ws = new WebSocket('wss://collab.server/ws');
-
-    ws.onopen = () => {
-      setConnected(true);
-      console.log('Connected to collaboration server');
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      handleCollabUpdate(data);
-    };
-
-    return () => ws.close();
-  }, []);
-
-  const handleCollabUpdate = (data: any) => {
-    setSession(prev => ({
-      ...prev!,
-      code: data.code,
-      participants: data.participants,
-    }));
-  };
-
-  return (
-    <div className="editor-container">
-      <AnimatePresence>
-        {connected && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="editor-panel"
-          >
-            {/* Editor content here */}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-export default CollaborativeEditor;`;
+import { useState, useEffect } from "react";
+import { useFiles } from "@/hooks/useFiles";
+import { useAuth } from "@/contexts/AuthContext";
 
 const CodeEditor = ({
   openFiles,
@@ -72,7 +17,20 @@ const CodeEditor = ({
   onCloseFile: (name: string) => void;
   roomId?: string;
 }) => {
-  const lines = mockCode.split("\n");
+  const { files, saveFile } = useFiles(roomId);
+  const { user } = useAuth();
+  const [code, setCode] = useState("");
+
+  // Update code when activeFile or files change
+  useEffect(() => {
+    setCode(files[activeFile] || "");
+  }, [activeFile, files]);
+
+  const handleSave = async () => {
+    await saveFile(activeFile, code);
+  };
+
+  const lines = code.split("\n");
 
   return (
     <div className="h-full flex flex-col">
@@ -87,12 +45,22 @@ const CodeEditor = ({
           >
             <Copy className="w-3.5 h-3.5" />
           </motion.button>
+          <span className="text-xs text-muted-foreground ml-2">
+            {user?.user_metadata?.display_name || user?.email}
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
           <button className="h-7 px-3 rounded-lg glass text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition-colors">
             TypeScript <ChevronDown className="w-3 h-3" />
           </button>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={handleSave}
+            className="h-7 px-4 rounded-lg bg-neon-blue/80 text-background text-xs font-medium flex items-center gap-1.5 hover:bg-neon-blue transition-colors"
+          >
+            <Save className="w-3 h-3" /> Save
+          </motion.button>
           <motion.button
             whileTap={{ scale: 0.95 }}
             className="h-7 px-4 rounded-lg bg-neon-green/80 text-background text-xs font-medium flex items-center gap-1.5"
@@ -129,58 +97,29 @@ const CodeEditor = ({
       </div>
 
       {/* Code Area */}
-      <div className="flex-1 overflow-auto scrollbar-thin relative">
-        {/* Mock cursors */}
-        <motion.div
-          animate={{ opacity: [1, 0.4, 1] }}
-          transition={{ duration: 1.2, repeat: Infinity }}
-          className="absolute top-[196px] left-[340px] w-0.5 h-5 bg-neon-pink z-10 rounded-full neon-glow-pink"
-        />
-        <div className="absolute top-[190px] left-[340px] px-1.5 py-0.5 rounded text-[10px] bg-neon-pink/20 text-neon-pink -translate-y-full font-sans">
-          Sarah
-        </div>
-
-        <motion.div
-          animate={{ opacity: [1, 0.4, 1] }}
-          transition={{ duration: 1.2, repeat: Infinity, delay: 0.6 }}
-          className="absolute top-[292px] left-[220px] w-0.5 h-5 bg-neon-blue z-10 rounded-full neon-glow-blue"
-        />
-        <div className="absolute top-[286px] left-[220px] px-1.5 py-0.5 rounded text-[10px] bg-neon-blue/20 text-neon-blue -translate-y-full font-sans">
-          Alex
-        </div>
-
-        <pre className="font-mono text-[13px] leading-6 p-4">
-          <code>
-            {lines.map((line, i) => (
-              <div key={i} className="flex">
-                <span className="w-10 text-right pr-4 text-muted-foreground/40 select-none shrink-0">{i + 1}</span>
-                <span className="text-secondary-foreground">
-                  {colorize(line)}
-                </span>
-              </div>
+      <div className="flex-1 overflow-hidden flex">
+        {/* Line numbers */}
+        <div className="w-12 bg-secondary/30 border-r border-glass-border overflow-hidden flex-shrink-0">
+          <pre className="font-mono text-[13px] leading-6 p-4 text-muted-foreground/40 text-right">
+            {lines.map((_, i) => (
+              <div key={i}>{i + 1}</div>
             ))}
-          </code>
-        </pre>
+          </pre>
+        </div>
+
+        {/* Editor */}
+        <div className="flex-1 overflow-auto">
+          <textarea
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="w-full h-full font-mono text-[13px] leading-6 p-4 bg-transparent border-none outline-none text-secondary-foreground resize-none"
+            spellCheck="false"
+            placeholder="Select or create a file to start editing..."
+          />
+        </div>
       </div>
     </div>
   );
 };
-
-function colorize(line: string) {
-  return line
-    .replace(/(import|from|export|default|const|let|return|new|interface|type|void)/g, '<kw>$1</kw>')
-    .replace(/('.*?'|".*?")/g, '<str>$1</str>')
-    .replace(/(\/\/.*)/g, '<cmt>$1</cmt>')
-    .split(/(<kw>.*?<\/kw>|<str>.*?<\/str>|<cmt>.*?<\/cmt>)/)
-    .map((part, i) => {
-      if (part.startsWith('<kw>'))
-        return <span key={i} className="text-neon-purple">{part.replace(/<\/?kw>/g, '')}</span>;
-      if (part.startsWith('<str>'))
-        return <span key={i} className="text-neon-green">{part.replace(/<\/?str>/g, '')}</span>;
-      if (part.startsWith('<cmt>'))
-        return <span key={i} className="text-muted-foreground">{part.replace(/<\/?cmt>/g, '')}</span>;
-      return <span key={i}>{part}</span>;
-    });
-}
 
 export default CodeEditor;

@@ -1,0 +1,78 @@
+{
+  "test-sync": {
+    "App.tsx": {
+      "content": "export default function App() {\n  return <h1>Hello</h1>\n}",
+      "lastModified": "2026-04-24T16:29:10.245Z"
+    }
+  },
+  "qhzr-q966": {
+    "App.tsx": {
+      "content": "export default function App() {\n  return <div>Hello World</div>\n}",
+      "lastModified": "2026-04-24T16:30:35.083Z"
+    },
+    "Header.tsx": {
+      "content": "export function Header() {\n  return <header>Header</header>\n}",
+      "lastModified": "2026-04-24T16:30:35.083Z"
+    },
+    "main.tsx": {
+      "content": "import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\n\nReactDOM.createRoot(document.getElementById('root')!).render(<App />)",
+      "lastModified": "2026-04-24T16:30:35.083Z"
+    }
+  },
+  "new-room": {
+    "App.tsx": {
+      "content": "export default function App() {\n  return <div>Hello World</div>\n}",
+      "lastModified": "2026-04-24T16:30:56.169Z"
+    },
+    "Header.tsx": {
+      "content": "export function Header() {\n  return <header>Header</header>\n}",
+      "lastModified": "2026-04-24T16:30:56.169Z"
+    },
+    "main.tsx": {
+      "content": "import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\n\nReactDOM.createRoot(document.getElementById('root')!).render(<App />)",
+      "lastModified": "2026-04-24T16:30:56.169Z"
+    }
+  },
+  "sync-test": {
+    "App.tsx": {
+      "content": "// Updated content\nconst x = 1;",
+      "lastModified": "2026-04-24T16:33:12.102Z"
+    },
+    "Header.tsx": {
+      "content": "export function Header() {\n  return <header>Header</header>\n}",
+      "lastModified": "2026-04-24T16:33:11.752Z"
+    },
+    "main.tsx": {
+      "content": "import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\n\nReactDOM.createRoot(document.getElementById('root')!).render(<App />)",
+      "lastModified": "2026-04-24T16:33:11.752Z"
+    }
+  },
+  "test-123": {
+    "App.tsx": {
+      "content": "export default function App() {\n  return <div>Hello World</div>\n}",
+      "lastModified": "2026-04-24T16:33:36.462Z"
+    },
+    "Header.tsx": {
+      "content": "export function Header() {\n  return <header>Header</header>\n}",
+      "lastModified": "2026-04-24T16:33:36.462Z"
+    },
+    "main.tsx": {
+      "content": "import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\n\nReactDOM.createRoot(document.getElementById('root')!).render(<App />)",
+      "lastModified": "2026-04-24T16:33:36.462Z"
+    }
+  },
+  "test-fixture": {
+    "App.tsx": {
+      "content": "export default function App() {\n  return <div>Hello World</div>\n}",
+      "lastModified": "2026-04-24T16:33:46.132Z"
+    },
+    "Header.tsx": {
+      "content": "export function Header() {\n  return <header>Header</header>\n}",
+      "lastModified": "2026-04-24T16:33:46.132Z"
+    },
+    "main.tsx": {
+      "content": "import React from 'react'\nimport ReactDOM from 'react-dom/client'\nimport App from './App'\n\nReactDOM.createRoot(document.getElementById('root')!).render(<App />)",
+      "lastModified": "2026-04-24T16:33:46.132Z"
+    }
+  }
+}

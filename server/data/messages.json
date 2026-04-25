@@ -1,0 +1,32 @@
+{
+  "qhzr-q966": [
+    {
+      "id": 1777046117692,
+      "user": "Test User",
+      "text": "yoooo",
+      "timestamp": "2026-04-24T15:55:17.663Z",
+      "color": "text-neon-purple"
+    },
+    {
+      "id": 1777046126893,
+      "user": "Mannan Bajaj",
+      "text": "hi bhai",
+      "timestamp": "2026-04-24T15:55:26.881Z",
+      "color": "text-neon-purple"
+    },
+    {
+      "id": 1777046137676,
+      "user": "Mannan Bajaj",
+      "text": "proxy laga dega?",
+      "timestamp": "2026-04-24T15:55:37.670Z",
+      "color": "text-neon-purple"
+    },
+    {
+      "id": 1777046154085,
+      "user": "Test User",
+      "text": "bhai, aap kon?",
+      "timestamp": "2026-04-24T15:55:54.077Z",
+      "color": "text-neon-purple"
+    }
+  ]
+}

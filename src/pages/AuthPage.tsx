@@ -22,7 +22,7 @@ const AuthPage = () => {
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate("/room");
+        setTimeout(() => navigate("/room"), 100);
       } else {
         const { error } = await supabase.auth.signUp({
           email,
@@ -33,11 +33,10 @@ const AuthPage = () => {
           },
         });
         if (error) throw error;
-        navigate("/room");
+        setTimeout(() => navigate("/room"), 100);
       }
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };

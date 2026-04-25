@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { io } from "socket.io-client";
 import Navbar from "@/components/collabcode/Navbar";
 import FileExplorer from "@/components/collabcode/FileExplorer";
 import CodeEditor from "@/components/collabcode/CodeEditor";
@@ -10,9 +12,43 @@ import NotificationToast from "@/components/collabcode/NotificationToast";
 
 const Index = () => {
   const { roomId } = useParams();
+  const { user } = useAuth();
   const [activeFile, setActiveFile] = useState("App.tsx");
   const [openFiles, setOpenFiles] = useState(["App.tsx", "Header.tsx", "main.tsx"]);
   const [terminalOpen, setTerminalOpen] = useState(true);
+
+  // Join room via WebSocket
+  useEffect(() => {
+    if (!roomId || !user) return;
+
+    const socket = io("http://localhost:5001", {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5,
+    });
+
+    socket.on("connect", () => {
+      console.log("Connected to server");
+      socket.emit("join-room", {
+        roomId,
+        userId: user.id,
+        displayName: user.user_metadata?.display_name || user.email || "Anonymous",
+      });
+    });
+
+    socket.on("user-joined", (data) => {
+      console.log(`${data.displayName} joined`);
+    });
+
+    socket.on("user-left", (data) => {
+      console.log(`${data.displayName} left`);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [roomId, user]);
 
   const handleSelectFile = (name: string) => {
     setActiveFile(name);
