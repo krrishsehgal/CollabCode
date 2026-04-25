@@ -40,7 +40,6 @@ const AuthPage = () => {
       }
     } catch (err: any) {
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };

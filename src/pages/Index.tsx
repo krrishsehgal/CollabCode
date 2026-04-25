@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import Navbar from "@/components/collabcode/Navbar";
 import FileExplorer from "@/components/collabcode/FileExplorer";
 import CodeEditor from "@/components/collabcode/CodeEditor";
@@ -7,7 +8,6 @@ import ActiveUsers from "@/components/collabcode/ActiveUsers";
 import ChatPanel from "@/components/collabcode/ChatPanel";
 import TerminalPanel from "@/components/collabcode/Terminal";
 import { useSocket } from "@/hooks/useSocket";
-import { useAuth } from "@/contexts/AuthContext";
 
 const Index = () => {
   const { roomId } = useParams();
