@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import Navbar from "@/components/collabcode/Navbar";
 import FileExplorer from "@/components/collabcode/FileExplorer";
@@ -8,6 +8,15 @@ import ChatPanel from "@/components/collabcode/ChatPanel";
 import TerminalPanel from "@/components/collabcode/Terminal";
 import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  ChatMessage,
+  fetchCodeFiles,
+  fetchMessages,
+  saveCodeFile,
+  saveMessage,
+  subscribeToCodeFiles,
+  subscribeToMessages,
+} from "@/lib/collabPersistence";
 
 const Index = () => {
   const { roomId } = useParams();
@@ -39,11 +48,73 @@ const Index = () => {
   const [users, setUsers] = useState<
     Array<{ userId: string; displayName: string }>
   >([]);
-  const [messages, setMessages] = useState<
-    { userId: string; displayName: string; message: string }[]
-  >([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activity, setActivity] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  const codeSaveTimers = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
+
+  const normalizeMessage = useCallback(
+    (message: ChatMessage) => ({
+      ...message,
+      displayName:
+        message.userId === currentUserId ? "You" : message.displayName,
+    }),
+    [currentUserId],
+  );
+
+  const upsertMessage = useCallback((message: ChatMessage) => {
+    setMessages((prev) => {
+      if (prev.some((item) => item.id === message.id)) {
+        return prev;
+      }
+      const next = [...prev, normalizeMessage(message)];
+      next.sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+      return next;
+    });
+  }, [normalizeMessage]);
+
+  const applyCodeUpdate = useCallback((fileName: string, code: string) => {
+    let nextActivity: string | null = null;
+    setFiles((prev) => {
+      if (prev[fileName] === code) {
+        return prev;
+      }
+      nextActivity =
+        fileName in prev
+          ? `Code updated: ${fileName}`
+          : `File created: ${fileName}`;
+      return { ...prev, [fileName]: code };
+    });
+    if (nextActivity) {
+      setActivity((prev) => [...prev, nextActivity]);
+    }
+  }, []);
+
+  const scheduleCodeSave = useCallback(
+    (fileName: string, code: string) => {
+      if (!currentRoomId) return;
+      const existingTimer = codeSaveTimers.current[fileName];
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      codeSaveTimers.current[fileName] = setTimeout(() => {
+        saveCodeFile({
+          roomId: currentRoomId,
+          fileName,
+          code,
+          updatedBy: currentUserId || null,
+        }).catch((error) => {
+          console.error("Failed to persist code file", error);
+        });
+      }, 750);
+    },
+    [currentRoomId, currentUserId],
+  );
 
   useEffect(() => {
     if (!socket) return;
@@ -64,8 +135,7 @@ const Index = () => {
       code: string;
     }) => {
       if (!fileName) return;
-      setFiles((prev) => ({ ...prev, [fileName]: code }));
-      setActivity((prev) => [...prev, `Code updated: ${fileName}`]);
+      applyCodeUpdate(fileName, code);
     };
 
     const handleUsersUpdated = ({
@@ -77,38 +147,90 @@ const Index = () => {
       setActivity((prev) => [...prev, `Users updated: ${nextUsers.length}`]);
     };
 
-    const handleReceiveMessage = ({
-      userId,
-      displayName,
-      message,
-    }: {
-      userId: string;
-      displayName: string;
-      message: string;
-    }) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          userId,
-          displayName: userId === currentUserId ? "You" : displayName,
-          message,
-        },
-      ]);
-      setActivity((prev) => [...prev, `Message from ${userId}`]);
-    };
-
     socket.on("file-created", handleFileCreated);
     socket.on("code-update", handleCodeUpdate);
     socket.on("users-updated", handleUsersUpdated);
-    socket.on("receive-message", handleReceiveMessage);
 
     return () => {
       socket.off("file-created", handleFileCreated);
       socket.off("code-update", handleCodeUpdate);
       socket.off("users-updated", handleUsersUpdated);
-      socket.off("receive-message", handleReceiveMessage);
     };
-  }, [socket, currentUserId]);
+  }, [socket, currentUserId, applyCodeUpdate]);
+
+  useEffect(() => {
+    if (!currentRoomId) return;
+    let isActive = true;
+    setMessages([]);
+    setFiles({});
+    setOpenFiles([]);
+    setActiveFile("");
+
+    const loadRoomState = async () => {
+      try {
+        const [roomMessages, roomFiles] = await Promise.all([
+          fetchMessages(currentRoomId),
+          fetchCodeFiles(currentRoomId),
+        ]);
+        if (!isActive) return;
+        setMessages(roomMessages.map(normalizeMessage));
+
+        if (roomFiles.length > 0) {
+          const nextFiles = roomFiles.reduce<Record<string, string>>(
+            (acc, file) => {
+              acc[file.fileName] = file.code;
+              return acc;
+            },
+            {},
+          );
+          const fileNames = Object.keys(nextFiles);
+          const firstFile = fileNames[0] ?? "";
+          setFiles(nextFiles);
+          setOpenFiles(firstFile ? [firstFile] : []);
+          setActiveFile(firstFile);
+        }
+      } catch (error) {
+        console.error("Failed to load room state", error);
+      }
+    };
+
+    loadRoomState();
+
+    const messagesChannel = subscribeToMessages(
+      currentRoomId,
+      (message) => {
+        upsertMessage(message);
+        setActivity((prev) => [
+          ...prev,
+          `Message from ${message.userId}`,
+        ]);
+      },
+    );
+    const codeChannel = subscribeToCodeFiles(currentRoomId, (codeFile) => {
+      applyCodeUpdate(codeFile.fileName, codeFile.code);
+    });
+
+    return () => {
+      isActive = false;
+      messagesChannel?.unsubscribe();
+      codeChannel?.unsubscribe();
+    };
+  }, [
+    currentRoomId,
+    currentUserId,
+    applyCodeUpdate,
+    normalizeMessage,
+    upsertMessage,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(codeSaveTimers.current).forEach((timer) =>
+        clearTimeout(timer),
+      );
+      codeSaveTimers.current = {};
+    };
+  }, [currentRoomId]);
 
   const handleSelectFile = (name: string) => {
     if (!(name in files)) return;
@@ -129,6 +251,14 @@ const Index = () => {
       userId: currentUserId,
       displayName: currentDisplayName,
     });
+    saveCodeFile({
+      roomId: currentRoomId,
+      fileName: name,
+      code: "",
+      updatedBy: currentUserId || null,
+    }).catch((error) => {
+      console.error("Failed to persist new file", error);
+    });
   };
 
   const handleCodeChange = (fileName: string, code: string) => {
@@ -141,6 +271,7 @@ const Index = () => {
       userId: currentUserId,
       displayName: currentDisplayName,
     });
+    scheduleCodeSave(fileName, code);
   };
 
   const handleCloseFile = (name: string) => {
@@ -151,14 +282,19 @@ const Index = () => {
     }
   };
 
-  const handleSendMessage = (message: string) => {
+  const handleSendMessage = async (message: string) => {
     if (!currentUserId || !currentRoomId) return;
-    socket?.emit("send-message", {
-      roomId: currentRoomId,
-      userId: currentUserId,
-      displayName: currentDisplayName,
-      message,
-    });
+    try {
+      const saved = await saveMessage({
+        roomId: currentRoomId,
+        userId: currentUserId,
+        displayName: currentDisplayName,
+        message,
+      });
+      upsertMessage(saved);
+    } catch (error) {
+      console.error("Failed to send message", error);
+    }
   };
 
   return (
