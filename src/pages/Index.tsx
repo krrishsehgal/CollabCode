@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import Navbar from "@/components/collabcode/Navbar";
 import FileExplorer from "@/components/collabcode/FileExplorer";
@@ -8,15 +8,15 @@ import ChatPanel from "@/components/collabcode/ChatPanel";
 import TerminalPanel from "@/components/collabcode/Terminal";
 import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  ChatMessage,
-  fetchCodeFiles,
-  fetchMessages,
-  saveCodeFile,
-  saveMessage,
-  subscribeToCodeFiles,
-  subscribeToMessages,
-} from "@/lib/collabPersistence";
+type ChatMessage = {
+  id: string;
+  clientMessageId?: string;
+  roomId: string;
+  userId: string;
+  displayName: string;
+  message: string;
+  createdAt: string;
+};
 
 const Index = () => {
   const { roomId } = useParams();
@@ -51,9 +51,46 @@ const Index = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activity, setActivity] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
-  const codeSaveTimers = useRef<
-    Record<string, ReturnType<typeof setTimeout>>
-  >({});
+  const storageKeys = {
+    messages: currentRoomId ? `collabcode:${currentRoomId}:messages` : "",
+    files: currentRoomId ? `collabcode:${currentRoomId}:files` : "",
+  };
+  const createClientMessageId = () => {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+  const readLocalMessages = useCallback((): ChatMessage[] => {
+    if (!storageKeys.messages || typeof localStorage === "undefined") {
+      return [];
+    }
+    try {
+      const raw = localStorage.getItem(storageKeys.messages);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as ChatMessage[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.error("Failed to read cached messages", error);
+      return [];
+    }
+  }, [storageKeys.messages]);
+
+  const readLocalFiles = useCallback((): Record<string, string> => {
+    if (!storageKeys.files || typeof localStorage === "undefined") {
+      return {};
+    }
+    try {
+      const raw = localStorage.getItem(storageKeys.files);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (error) {
+      console.error("Failed to read cached files", error);
+      return {};
+    }
+  }, [storageKeys.files]);
 
   const normalizeMessage = useCallback(
     (message: ChatMessage) => ({
@@ -66,10 +103,24 @@ const Index = () => {
 
   const upsertMessage = useCallback((message: ChatMessage) => {
     setMessages((prev) => {
-      if (prev.some((item) => item.id === message.id)) {
-        return prev;
+      const matchIndex = prev.findIndex(
+        (item) =>
+          item.id === message.id ||
+          (message.clientMessageId &&
+            item.clientMessageId === message.clientMessageId),
+      );
+      const normalized = normalizeMessage(message);
+      if (matchIndex >= 0) {
+        const next = [...prev];
+        next[matchIndex] = { ...next[matchIndex], ...normalized };
+        next.sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() -
+            new Date(b.createdAt).getTime(),
+        );
+        return next;
       }
-      const next = [...prev, normalizeMessage(message)];
+      const next = [...prev, normalized];
       next.sort(
         (a, b) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
@@ -94,27 +145,6 @@ const Index = () => {
       setActivity((prev) => [...prev, nextActivity]);
     }
   }, []);
-
-  const scheduleCodeSave = useCallback(
-    (fileName: string, code: string) => {
-      if (!currentRoomId) return;
-      const existingTimer = codeSaveTimers.current[fileName];
-      if (existingTimer) {
-        clearTimeout(existingTimer);
-      }
-      codeSaveTimers.current[fileName] = setTimeout(() => {
-        saveCodeFile({
-          roomId: currentRoomId,
-          fileName,
-          code,
-          updatedBy: currentUserId || null,
-        }).catch((error) => {
-          console.error("Failed to persist code file", error);
-        });
-      }, 750);
-    },
-    [currentRoomId, currentUserId],
-  );
 
   useEffect(() => {
     if (!socket) return;
@@ -147,90 +177,83 @@ const Index = () => {
       setActivity((prev) => [...prev, `Users updated: ${nextUsers.length}`]);
     };
 
+    const handleReceiveMessage = ({
+      userId,
+      displayName,
+      message,
+      clientMessageId,
+    }: {
+      userId: string;
+      displayName: string;
+      message: string;
+      clientMessageId?: string;
+    }) => {
+      if (userId === currentUserId) {
+        return;
+      }
+      const createdAt = new Date().toISOString();
+      upsertMessage({
+        id: clientMessageId ?? `${userId}-${createdAt}`,
+        clientMessageId,
+        roomId: currentRoomId,
+        userId,
+        displayName,
+        message,
+        createdAt,
+      });
+      setActivity((prev) => [...prev, `Message from ${userId}`]);
+    };
+
     socket.on("file-created", handleFileCreated);
     socket.on("code-update", handleCodeUpdate);
     socket.on("users-updated", handleUsersUpdated);
+    socket.on("receive-message", handleReceiveMessage);
 
     return () => {
       socket.off("file-created", handleFileCreated);
       socket.off("code-update", handleCodeUpdate);
       socket.off("users-updated", handleUsersUpdated);
+      socket.off("receive-message", handleReceiveMessage);
     };
-  }, [socket, currentUserId, applyCodeUpdate]);
+  }, [socket, currentUserId, applyCodeUpdate, currentRoomId, upsertMessage]);
 
   useEffect(() => {
     if (!currentRoomId) return;
-    let isActive = true;
     setMessages([]);
     setFiles({});
     setOpenFiles([]);
     setActiveFile("");
 
-    const loadRoomState = async () => {
-      try {
-        const [roomMessages, roomFiles] = await Promise.all([
-          fetchMessages(currentRoomId),
-          fetchCodeFiles(currentRoomId),
-        ]);
-        if (!isActive) return;
-        setMessages(roomMessages.map(normalizeMessage));
+    const cachedMessages = readLocalMessages();
+    if (cachedMessages.length > 0) {
+      setMessages(cachedMessages.map(normalizeMessage));
+    }
 
-        if (roomFiles.length > 0) {
-          const nextFiles = roomFiles.reduce<Record<string, string>>(
-            (acc, file) => {
-              acc[file.fileName] = file.code;
-              return acc;
-            },
-            {},
-          );
-          const fileNames = Object.keys(nextFiles);
-          const firstFile = fileNames[0] ?? "";
-          setFiles(nextFiles);
-          setOpenFiles(firstFile ? [firstFile] : []);
-          setActiveFile(firstFile);
-        }
-      } catch (error) {
-        console.error("Failed to load room state", error);
-      }
-    };
-
-    loadRoomState();
-
-    const messagesChannel = subscribeToMessages(
-      currentRoomId,
-      (message) => {
-        upsertMessage(message);
-        setActivity((prev) => [
-          ...prev,
-          `Message from ${message.userId}`,
-        ]);
-      },
-    );
-    const codeChannel = subscribeToCodeFiles(currentRoomId, (codeFile) => {
-      applyCodeUpdate(codeFile.fileName, codeFile.code);
-    });
-
-    return () => {
-      isActive = false;
-      messagesChannel?.unsubscribe();
-      codeChannel?.unsubscribe();
-    };
-  }, [
-    currentRoomId,
-    currentUserId,
-    applyCodeUpdate,
-    normalizeMessage,
-    upsertMessage,
-  ]);
+    const cachedFiles = readLocalFiles();
+    const fileNames = Object.keys(cachedFiles);
+    const firstFile = fileNames[0] ?? "";
+    setFiles(cachedFiles);
+    setOpenFiles(firstFile ? [firstFile] : []);
+    setActiveFile(firstFile);
+  }, [currentRoomId, normalizeMessage, readLocalFiles, readLocalMessages]);
 
   useEffect(() => {
-    return () => {
-      Object.values(codeSaveTimers.current).forEach((timer) =>
-        clearTimeout(timer),
-      );
-      codeSaveTimers.current = {};
-    };
-  }, [currentRoomId]);
+    if (!storageKeys.messages || typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(storageKeys.messages, JSON.stringify(messages));
+    } catch (error) {
+      console.error("Failed to cache messages", error);
+    }
+  }, [messages, storageKeys.messages]);
+
+  useEffect(() => {
+    if (!storageKeys.files || typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(storageKeys.files, JSON.stringify(files));
+    } catch (error) {
+      console.error("Failed to cache files", error);
+    }
+  }, [files, storageKeys.files]);
 
   const handleSelectFile = (name: string) => {
     if (!(name in files)) return;
@@ -251,14 +274,6 @@ const Index = () => {
       userId: currentUserId,
       displayName: currentDisplayName,
     });
-    saveCodeFile({
-      roomId: currentRoomId,
-      fileName: name,
-      code: "",
-      updatedBy: currentUserId || null,
-    }).catch((error) => {
-      console.error("Failed to persist new file", error);
-    });
   };
 
   const handleCodeChange = (fileName: string, code: string) => {
@@ -271,7 +286,6 @@ const Index = () => {
       userId: currentUserId,
       displayName: currentDisplayName,
     });
-    scheduleCodeSave(fileName, code);
   };
 
   const handleCloseFile = (name: string) => {
@@ -284,17 +298,24 @@ const Index = () => {
 
   const handleSendMessage = async (message: string) => {
     if (!currentUserId || !currentRoomId) return;
-    try {
-      const saved = await saveMessage({
-        roomId: currentRoomId,
-        userId: currentUserId,
-        displayName: currentDisplayName,
-        message,
-      });
-      upsertMessage(saved);
-    } catch (error) {
-      console.error("Failed to send message", error);
-    }
+    const clientMessageId = createClientMessageId();
+    const optimisticMessage: ChatMessage = {
+      id: clientMessageId,
+      clientMessageId,
+      roomId: currentRoomId,
+      userId: currentUserId,
+      displayName: currentDisplayName,
+      message,
+      createdAt: new Date().toISOString(),
+    };
+    upsertMessage(optimisticMessage);
+    socket?.emit("send-message", {
+      roomId: currentRoomId,
+      userId: currentUserId,
+      displayName: currentDisplayName,
+      message,
+      clientMessageId,
+    });
   };
 
   return (

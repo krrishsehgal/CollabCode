@@ -82,8 +82,10 @@ io.on("connection", (socket) => {
 
   // Handle chat messages
   socket.on("send-message", (data) => {
-    const { roomId, userId, displayName, message } = data;
-    io.to(roomId).emit("receive-message", { userId, displayName, message });
+    const { roomId, userId, displayName, message, clientMessageId } = data;
+    io
+      .to(roomId)
+      .emit("receive-message", { userId, displayName, message, clientMessageId });
   });
 
   // Handle disconnect
