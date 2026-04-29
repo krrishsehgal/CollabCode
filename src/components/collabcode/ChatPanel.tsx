@@ -3,9 +3,11 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 
 interface ChatMessage {
+  id: string;
   userId: string;
   displayName: string;
   message: string;
+  createdAt: string;
 }
 
 const ChatPanel = ({
@@ -36,7 +38,7 @@ const ChatPanel = ({
         ) : (
           messages.map((msg, i) => (
             <motion.div
-              key={i}
+              key={msg.id}
               initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05 }}

@@ -2,6 +2,14 @@ import { useState } from "react";
 import { ChevronDown, Copy, Play, X } from "lucide-react";
 import { motion } from "framer-motion";
 
+type FileEntry = {
+  id: string;
+  name: string;
+  content: string;
+  room_id: string;
+  created_at: number;
+};
+
 const CodeEditor = ({
   files,
   openFiles,
@@ -11,7 +19,7 @@ const CodeEditor = ({
   onCodeChange,
   roomId = "ab7x-k92m",
 }: {
-  files: Record<string, string>;
+  files: Record<string, FileEntry>;
   openFiles: string[];
   activeFile: string;
   onSelectFile: (name: string) => void;
@@ -19,7 +27,7 @@ const CodeEditor = ({
   onCodeChange: (fileName: string, code: string) => void;
   roomId?: string;
 }) => {
-  const code = activeFile ? files[activeFile] ?? "" : "";
+  const code = activeFile ? files[activeFile]?.content ?? "" : "";
   const [copied, setCopied] = useState(false);
 
   const handleCodeChange = (nextCode: string) => {
