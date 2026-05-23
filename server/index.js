@@ -56,7 +56,7 @@ io.on("connection", (socket) => {
       roomUsers[roomId].push({ userId, displayName });
     } else {
       roomUsers[roomId] = roomUsers[roomId].map((user) =>
-        user.userId === userId ? { userId, displayName } : user
+        user.userId === userId ? { userId, displayName } : user,
       );
     }
     socketUsers[socket.id] = { userId, displayName, roomId };
@@ -80,12 +80,22 @@ io.on("connection", (socket) => {
     console.log(`File created: ${fileName} in room ${roomId}`);
   });
 
+  // Handle collaborative file deletion
+  socket.on("file-deleted", (data) => {
+    const { roomId, fileName } = data;
+    io.to(roomId).emit("file-deleted", fileName);
+    console.log(`File deleted: ${fileName} in room ${roomId}`);
+  });
+
   // Handle chat messages
   socket.on("send-message", (data) => {
     const { roomId, userId, displayName, message, clientMessageId } = data;
-    io
-      .to(roomId)
-      .emit("receive-message", { userId, displayName, message, clientMessageId });
+    io.to(roomId).emit("receive-message", {
+      userId,
+      displayName,
+      message,
+      clientMessageId,
+    });
   });
 
   // Handle disconnect
@@ -94,10 +104,12 @@ io.on("connection", (socket) => {
 
     if (userData) {
       const { userId, roomId } = userData;
-      
+
       // Remove user from room
       if (roomUsers[roomId]) {
-        roomUsers[roomId] = roomUsers[roomId].filter((user) => user.userId !== userId);
+        roomUsers[roomId] = roomUsers[roomId].filter(
+          (user) => user.userId !== userId,
+        );
 
         // Broadcast active users in this room
         io.to(roomId).emit("users-updated", { users: roomUsers[roomId] });

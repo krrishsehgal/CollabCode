@@ -8,6 +8,8 @@ type FileEntry = {
   content: string;
   room_id: string;
   created_at: number;
+  updated_at: number;
+  language: string;
 };
 
 const CodeEditor = ({
@@ -18,6 +20,7 @@ const CodeEditor = ({
   onCloseFile,
   onCodeChange,
   roomId = "ab7x-k92m",
+  isLoading = false,
 }: {
   files: Record<string, FileEntry>;
   openFiles: string[];
@@ -26,8 +29,9 @@ const CodeEditor = ({
   onCloseFile: (name: string) => void;
   onCodeChange: (fileName: string, code: string) => void;
   roomId?: string;
+  isLoading?: boolean;
 }) => {
-  const code = activeFile ? files[activeFile]?.content ?? "" : "";
+  const code = activeFile ? (files[activeFile]?.content ?? "") : "";
   const [copied, setCopied] = useState(false);
 
   const handleCodeChange = (nextCode: string) => {
@@ -60,7 +64,9 @@ const CodeEditor = ({
           >
             <Copy className="w-3.5 h-3.5" />
           </motion.button>
-          {copied && <span className="text-[10px] text-neon-green">Copied!</span>}
+          {copied && (
+            <span className="text-[10px] text-neon-green">Copied!</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -107,8 +113,14 @@ const CodeEditor = ({
         <textarea
           value={code}
           onChange={(e) => handleCodeChange(e.target.value)}
-          disabled={!activeFile}
-          placeholder={activeFile ? "" : "Create or select a file to start editing"}
+          disabled={!activeFile || isLoading}
+          placeholder={
+            isLoading
+              ? "Loading files..."
+              : activeFile
+                ? ""
+                : "Create or select a file to start editing"
+          }
           className="w-full h-full bg-transparent p-4 resize-none outline-none font-mono text-[13px] leading-6 text-secondary-foreground"
           spellCheck={false}
         />
