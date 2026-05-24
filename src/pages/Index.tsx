@@ -9,6 +9,7 @@ import TerminalPanel from "@/components/collabcode/Terminal";
 import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { getDisplayName } from "@/lib/user";
 type ChatMessage = {
   id: string;
   clientMessageId?: string;
@@ -33,20 +34,7 @@ const Index = () => {
   const { roomId } = useParams();
   const { user } = useAuth();
   const currentRoomId = roomId || "";
-  const identityDisplayName = user?.identities?.find((identity) => {
-    const displayName = identity.identity_data?.display_name;
-    return typeof displayName === "string" && displayName.trim().length > 0;
-  })?.identity_data?.display_name as string | undefined;
-  const currentDisplayName =
-    identityDisplayName?.trim() ||
-    (typeof user?.user_metadata?.name === "string"
-      ? user.user_metadata.name.trim()
-      : "") ||
-    (typeof user?.user_metadata?.display_name === "string"
-      ? user.user_metadata.display_name.trim()
-      : "") ||
-    user?.email ||
-    (user?.id ? user.id.slice(0, 6) : "");
+  const currentDisplayName = getDisplayName(user);
   const socket = useSocket({
     roomId: currentRoomId,
     userId: user?.id,
