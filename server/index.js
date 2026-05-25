@@ -73,22 +73,28 @@ io.on("connection", (socket) => {
     socket.to(roomId).emit("code-update", { fileName, code });
   });
 
-  // Handle cursor movement
-  socket.on("cursor-move", (data) => {
-    const { roomId, userId, displayName, x, y } = data || {};
-    if (!roomId || !userId) return;
-    socket.to(roomId).emit("cursor-update", {
+  // Handle editor cursor movement
+  socket.on("editor-cursor-move", (data) => {
+    const {
+      roomId,
       userId,
       displayName,
-      x,
-      y,
+      fileName,
+      lineNumber,
+      column,
+      isTyping,
+    } =
+      data || {};
+    if (!roomId || !userId || !fileName) return;
+    if (typeof lineNumber !== "number" || typeof column !== "number") return;
+    socket.to(roomId).emit("editor-cursor-update", {
+      userId,
+      displayName,
+      fileName,
+      lineNumber,
+      column,
+      isTyping: Boolean(isTyping),
     });
-  });
-
-  socket.on("cursor-leave", (data) => {
-    const { roomId, userId } = data || {};
-    if (!roomId || !userId) return;
-    socket.to(roomId).emit("cursor-left", { userId });
   });
 
   // Handle collaborative file creation

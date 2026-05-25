@@ -10,7 +10,6 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { CursorTracker } from "@/components/CursorTracker";
 import AuthPage from "./pages/AuthPage";
 import RoomPage from "./pages/RoomPage";
 import Index from "./pages/Index";
@@ -32,12 +31,7 @@ const PublicRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
-const AppLayout = () => (
-  <>
-    <CursorTracker />
-    <Outlet />
-  </>
-);
+const AppLayout = () => <Outlet />;
 
 const AppContent = () => {
   return (

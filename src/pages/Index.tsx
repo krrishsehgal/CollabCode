@@ -30,6 +30,17 @@ type FileEntry = {
   language: string;
 };
 
+type EditorCursor = {
+  userId: string;
+  displayName: string;
+  fileName: string;
+  lineNumber: number;
+  column: number;
+  isTyping?: boolean;
+};
+
+const CURSOR_EMIT_INTERVAL_MS = 40;
+
 const Index = () => {
   const { roomId } = useParams();
   const { user } = useAuth();
@@ -52,12 +63,24 @@ const Index = () => {
     Array<{ userId: string; displayName: string }>
   >([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [remoteCursors, setRemoteCursors] = useState<
+    Record<string, EditorCursor>
+  >({});
   const [activity, setActivity] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
   const filesRef = useRef<Record<string, FileEntry>>({});
   const saveTimersRef = useRef<Record<string, number>>({});
   const pendingSavesRef = useRef<Record<string, string>>({});
   const activeFileRef = useRef(activeFile);
+  const cursorEmitRef = useRef<{
+    lastEmit: number;
+    timer: number | null;
+    pending: { fileName: string; lineNumber: number; column: number } | null;
+  }>({
+    lastEmit: 0,
+    timer: null,
+    pending: null,
+  });
   const lastLoadedRoomRef = useRef("");
   const autoLoadAttemptedRef = useRef(false);
   const autoLoadOnOpen = false;
@@ -86,10 +109,42 @@ const Index = () => {
       case "js":
       case "jsx":
         return "javascript";
+      case "c":
+      case "h":
+        return "c";
+      case "cpp":
+      case "hpp":
+      case "cc":
+      case "cxx":
+        return "cpp";
+      case "py":
+        return "python";
+      case "java":
+        return "java";
+      case "go":
+        return "go";
+      case "rs":
+        return "rust";
+      case "rb":
+        return "ruby";
+      case "php":
+        return "php";
+      case "sh":
+      case "bash":
+        return "shell";
+      case "yml":
+      case "yaml":
+        return "yaml";
+      case "toml":
+        return "toml";
+      case "sql":
+        return "sql";
       case "json":
         return "json";
       case "html":
         return "html";
+      case "xml":
+        return "xml";
       case "css":
         return "css";
       case "md":
@@ -98,6 +153,16 @@ const Index = () => {
         return "plaintext";
     }
   }, []);
+  const resolveLanguage = useCallback(
+    (fileName: string, storedLanguage?: string | null) => {
+      const inferred = inferLanguageFromFileName(fileName);
+      if (storedLanguage && storedLanguage !== "plaintext") {
+        return storedLanguage;
+      }
+      return inferred;
+    },
+    [inferLanguageFromFileName],
+  );
   const createFileEntry = useCallback(
     (
       name: string,
@@ -110,9 +175,9 @@ const Index = () => {
       room_id: overrides.room_id ?? roomDbId ?? currentRoomId,
       created_at: overrides.created_at ?? Date.now(),
       updated_at: overrides.updated_at ?? Date.now(),
-      language: overrides.language ?? inferLanguageFromFileName(name),
+      language: resolveLanguage(name, overrides.language),
     }),
-    [createFileId, currentRoomId, inferLanguageFromFileName, roomDbId],
+    [createFileId, currentRoomId, resolveLanguage, roomDbId],
   );
   const persistMessages = useCallback(
     (nextMessages: ChatMessage[]) => {
@@ -346,7 +411,7 @@ const Index = () => {
           nextFiles[fileName] = createFileEntry(fileName, content, {
             id: file.id,
             room_id: file.room_id,
-            language: file.language ?? inferLanguageFromFileName(fileName),
+            language: file.language ?? undefined,
             created_at: updatedAt,
             updated_at: updatedAt,
           });
@@ -365,7 +430,7 @@ const Index = () => {
         const currentActive = activeFileRef.current;
         const nextActive = fileNames.includes(currentActive)
           ? currentActive
-          : fileNames[0] ?? "";
+          : (fileNames[0] ?? "");
         setActiveFile(nextActive);
         setOpenFiles((prev) => {
           const filtered = prev.filter((name) => name in nextFiles);
@@ -483,7 +548,7 @@ const Index = () => {
           id: record.id,
           room_id: record.room_id,
           content: record.content ?? prev[fileName].content,
-          language: record.language ?? prev[fileName].language,
+          language: resolveLanguage(fileName, record.language ?? prev[fileName].language),
           updated_at: updatedAt,
         };
         const next = { ...prev, [fileName]: nextEntry };
@@ -491,7 +556,7 @@ const Index = () => {
         return next;
       });
     },
-    [persistFiles],
+    [persistFiles, resolveLanguage],
   );
 
   const persistFileContent = useCallback(
@@ -578,7 +643,7 @@ const Index = () => {
       const currentActive = activeFileRef.current;
       const nextActive = remainingNames.includes(currentActive)
         ? currentActive
-        : remainingNames[0] ?? "";
+        : (remainingNames[0] ?? "");
       setActiveFile(nextActive);
       setOpenFiles((prev) => {
         const filtered = prev.filter((name) => name in nextFiles);
@@ -617,6 +682,14 @@ const Index = () => {
         window.clearTimeout(timer);
       });
       saveTimersRef.current = {};
+      if (cursorEmitRef.current.timer !== null) {
+        window.clearTimeout(cursorEmitRef.current.timer);
+      }
+      cursorEmitRef.current = {
+        lastEmit: 0,
+        timer: null,
+        pending: null,
+      };
     };
   }, [currentRoomId]);
 
@@ -684,6 +757,54 @@ const Index = () => {
       applyCodeUpdate(fileName, code);
     };
 
+    const handleEditorCursorUpdate = ({
+      userId,
+      displayName,
+      fileName,
+      lineNumber,
+      column,
+      isTyping,
+    }: {
+      userId: string;
+      displayName?: string;
+      fileName: string;
+      lineNumber: number;
+      column: number;
+      isTyping?: boolean;
+    }) => {
+      if (!userId || userId === currentUserId) return;
+      if (!fileName) return;
+      if (typeof lineNumber !== "number" || typeof column !== "number") return;
+      const normalizedName =
+        typeof displayName === "string" && displayName.trim()
+          ? displayName
+          : userId.slice(0, 6);
+      setRemoteCursors((prev) => {
+        const existing = prev[userId];
+        if (
+          existing &&
+          existing.fileName === fileName &&
+          existing.lineNumber === lineNumber &&
+          existing.column === column &&
+          existing.displayName === normalizedName &&
+          existing.isTyping === Boolean(isTyping)
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [userId]: {
+            userId,
+            displayName: normalizedName,
+            fileName,
+            lineNumber,
+            column,
+            isTyping: Boolean(isTyping),
+          },
+        };
+      });
+    };
+
     const handleFileDeleted = (fileName: string) => {
       if (!fileName) return;
       removeFileFromState(fileName);
@@ -697,6 +818,18 @@ const Index = () => {
     }) => {
       setUsers(nextUsers);
       setActivity((prev) => [...prev, `Users updated: ${nextUsers.length}`]);
+      const activeIds = new Set(nextUsers.map((user) => user.userId));
+      setRemoteCursors((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        Object.keys(next).forEach((userId) => {
+          if (!activeIds.has(userId)) {
+            delete next[userId];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
     };
 
     const handleReceiveMessage = ({
@@ -728,6 +861,7 @@ const Index = () => {
 
     socket.on("file-created", handleFileCreated);
     socket.on("code-update", handleCodeUpdate);
+    socket.on("editor-cursor-update", handleEditorCursorUpdate);
     socket.on("file-deleted", handleFileDeleted);
     socket.on("users-updated", handleUsersUpdated);
     socket.on("receive-message", handleReceiveMessage);
@@ -735,6 +869,7 @@ const Index = () => {
     return () => {
       socket.off("file-created", handleFileCreated);
       socket.off("code-update", handleCodeUpdate);
+      socket.off("editor-cursor-update", handleEditorCursorUpdate);
       socket.off("file-deleted", handleFileDeleted);
       socket.off("users-updated", handleUsersUpdated);
       socket.off("receive-message", handleReceiveMessage);
@@ -763,6 +898,7 @@ const Index = () => {
     setRoomDbId("");
     setFilesError("");
     setHasLoadedWorkspace(false);
+    setRemoteCursors({});
     pendingSavesRef.current = {};
     lastLoadedRoomRef.current = "";
     autoLoadAttemptedRef.current = false;
@@ -947,6 +1083,58 @@ const Index = () => {
     }
   };
 
+  const emitEditorCursor = useCallback(
+    (payload: {
+      fileName: string;
+      lineNumber: number;
+      column: number;
+      isTyping?: boolean;
+    }) => {
+      if (!socket || !currentRoomId || !currentUserId || !currentDisplayName) {
+        return;
+      }
+      if (!payload.fileName || payload.fileName !== activeFileRef.current) {
+        return;
+      }
+      if (payload.lineNumber <= 0 || payload.column <= 0) return;
+
+      const now = performance.now();
+      const send = (data: typeof payload) => {
+        cursorEmitRef.current.lastEmit = performance.now();
+        socket.emit("editor-cursor-move", {
+          roomId: currentRoomId,
+          userId: currentUserId,
+          displayName: currentDisplayName,
+          fileName: data.fileName,
+          lineNumber: data.lineNumber,
+          column: data.column,
+          isTyping: Boolean(data.isTyping),
+        });
+      };
+
+      if (now - cursorEmitRef.current.lastEmit >= CURSOR_EMIT_INTERVAL_MS) {
+        send(payload);
+        return;
+      }
+
+      cursorEmitRef.current.pending = payload;
+      if (cursorEmitRef.current.timer === null) {
+        const wait = Math.max(
+          CURSOR_EMIT_INTERVAL_MS - (now - cursorEmitRef.current.lastEmit),
+          0,
+        );
+        cursorEmitRef.current.timer = window.setTimeout(() => {
+          cursorEmitRef.current.timer = null;
+          if (cursorEmitRef.current.pending) {
+            send(cursorEmitRef.current.pending);
+            cursorEmitRef.current.pending = null;
+          }
+        }, wait);
+      }
+    },
+    [socket, currentRoomId, currentUserId, currentDisplayName],
+  );
+
   const handleCodeChange = (fileName: string, code: string) => {
     if (!currentRoomId) return;
     setFiles((prev) => {
@@ -998,6 +1186,10 @@ const Index = () => {
     });
   };
 
+  const activeLanguage = activeFile
+    ? resolveLanguage(activeFile, files[activeFile]?.language)
+    : "plaintext";
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       <Navbar />
@@ -1024,9 +1216,12 @@ const Index = () => {
               files={files}
               openFiles={openFiles}
               activeFile={activeFile}
+              language={activeLanguage}
+              remoteCursors={remoteCursors}
               onSelectFile={handleSelectFile}
               onCloseFile={handleCloseFile}
               onCodeChange={handleCodeChange}
+              onCursorChange={emitEditorCursor}
               roomId={currentRoomId}
               isLoading={isLoadingFiles}
             />
