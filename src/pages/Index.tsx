@@ -39,6 +39,21 @@ type EditorCursor = {
   isTyping?: boolean;
 };
 
+type ExecutionOutput = {
+  stdout: string;
+  stderr: string;
+  compileOutput: string;
+  message: string;
+  errorMessage: string;
+  status?: string;
+  statusId?: number | null;
+  time?: string | null;
+  memory?: number | null;
+  language?: string;
+  languageId?: number | null;
+  fileName?: string;
+};
+
 const CURSOR_EMIT_INTERVAL_MS = 40;
 
 const Index = () => {
@@ -66,8 +81,17 @@ const Index = () => {
   const [remoteCursors, setRemoteCursors] = useState<
     Record<string, EditorCursor>
   >({});
-  const [activity, setActivity] = useState<string[]>([]);
+  const [, setActivity] = useState<string[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  const [executionOutput, setExecutionOutput] = useState<ExecutionOutput>({
+    stdout: "",
+    stderr: "",
+    compileOutput: "",
+    message: "",
+    errorMessage: "",
+  });
+  const [stdinValue, setStdinValue] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
   const filesRef = useRef<Record<string, FileEntry>>({});
   const saveTimersRef = useRef<Record<string, number>>({});
   const pendingSavesRef = useRef<Record<string, string>>({});
@@ -152,6 +176,59 @@ const Index = () => {
       default:
         return "plaintext";
     }
+  }, []);
+  const resolveJudge0Language = useCallback((fileName: string) => {
+    const extension = fileName.split(".").pop()?.toLowerCase();
+    const languages: Record<
+      string,
+      { id: number; label: string }
+    > = {
+      ts: { id: 101, label: "TypeScript" },
+      tsx: { id: 101, label: "TypeScript" },
+      js: { id: 93, label: "JavaScript" },
+      jsx: { id: 93, label: "JavaScript" },
+      c: { id: 103, label: "C" },
+      h: { id: 103, label: "C" },
+      cpp: { id: 105, label: "C++" },
+      hpp: { id: 105, label: "C++" },
+      cc: { id: 105, label: "C++" },
+      cxx: { id: 105, label: "C++" },
+      py: { id: 100, label: "Python" },
+      java: { id: 91, label: "Java" },
+      go: { id: 107, label: "Go" },
+      rs: { id: 108, label: "Rust" },
+      rb: { id: 72, label: "Ruby" },
+      php: { id: 98, label: "PHP" },
+      sh: { id: 46, label: "Bash" },
+      bash: { id: 46, label: "Bash" },
+    };
+    return extension ? languages[extension] : undefined;
+  }, []);
+  const formatLanguageLabel = useCallback((language: string) => {
+    const normalized = language.toLowerCase();
+    const labels: Record<string, string> = {
+      plaintext: "Plain Text",
+      typescript: "TypeScript",
+      javascript: "JavaScript",
+      cpp: "C++",
+      c: "C",
+      python: "Python",
+      java: "Java",
+      go: "Go",
+      rust: "Rust",
+      ruby: "Ruby",
+      php: "PHP",
+      bash: "Bash",
+      shell: "Shell",
+      html: "HTML",
+      css: "CSS",
+      json: "JSON",
+      yaml: "YAML",
+      toml: "TOML",
+      sql: "SQL",
+      markdown: "Markdown",
+    };
+    return labels[normalized] ?? normalized.toUpperCase();
   }, []);
   const resolveLanguage = useCallback(
     (fileName: string, storedLanguage?: string | null) => {
@@ -1186,9 +1263,227 @@ const Index = () => {
     });
   };
 
+  const createEmptyExecutionOutput = useCallback(
+    (overrides: Partial<ExecutionOutput> = {}): ExecutionOutput => ({
+      stdout: "",
+      stderr: "",
+      compileOutput: "",
+      message: "",
+      errorMessage: "",
+      ...overrides,
+    }),
+    [],
+  );
+
+  const handleRun = useCallback(async () => {
+    if (isRunning) return;
+    if (!activeFile) {
+      setExecutionOutput(
+        createEmptyExecutionOutput({ errorMessage: "Select a file to run." }),
+      );
+      setTerminalOpen(true);
+      return;
+    }
+    const file = files[activeFile];
+    const judge0Language = resolveJudge0Language(activeFile);
+    if (!judge0Language) {
+      setExecutionOutput(
+        createEmptyExecutionOutput({
+          errorMessage: `Unsupported file type for ${activeFile}.`,
+          fileName: activeFile,
+        }),
+      );
+      setTerminalOpen(true);
+      return;
+    }
+
+    const code = file?.content ?? "";
+    setIsRunning(true);
+    setTerminalOpen(true);
+    setExecutionOutput(
+      createEmptyExecutionOutput({
+        fileName: activeFile,
+        language: judge0Language.label,
+        languageId: judge0Language.id,
+        status: "Submitting",
+      }),
+    );
+
+    try {
+      const response = await fetch(
+        "https://ce.judge0.com/submissions?base64_encoded=false&wait=false",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            source_code: code,
+            language_id: judge0Language.id,
+            stdin: stdinValue ?? "",
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        let message = `Execution failed (${response.status})`;
+        try {
+          const errorPayload = (await response.json()) as { message?: string };
+          if (errorPayload?.message) {
+            message = errorPayload.message;
+          }
+        } catch (error) {
+          console.error("Failed to parse execution error", error);
+        }
+        setExecutionOutput(
+          createEmptyExecutionOutput({
+            errorMessage: message,
+            fileName: activeFile,
+            language: judge0Language.label,
+            languageId: judge0Language.id,
+            status: "Failed",
+          }),
+        );
+        return;
+      }
+
+      const submission = (await response.json()) as { token?: string };
+      if (!submission.token) {
+        setExecutionOutput(
+          createEmptyExecutionOutput({
+            errorMessage: "Submission failed: missing token.",
+            fileName: activeFile,
+            language: judge0Language.label,
+            languageId: judge0Language.id,
+            status: "Failed",
+          }),
+        );
+        return;
+      }
+
+      const pollDelayMs = 750;
+      const maxAttempts = 20;
+      const sleep = (ms: number) =>
+        new Promise<void>((resolve) => {
+          window.setTimeout(() => resolve(), ms);
+        });
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const pollResponse = await fetch(
+          `https://ce.judge0.com/submissions/${submission.token}?base64_encoded=false`,
+          {
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+
+        if (!pollResponse.ok) {
+          let message = `Execution failed (${pollResponse.status})`;
+          try {
+            const errorPayload = (await pollResponse.json()) as {
+              message?: string;
+            };
+            if (errorPayload?.message) {
+              message = errorPayload.message;
+            }
+          } catch (error) {
+            console.error("Failed to parse execution error", error);
+          }
+          setExecutionOutput(
+            createEmptyExecutionOutput({
+              errorMessage: message,
+              fileName: activeFile,
+              language: judge0Language.label,
+              languageId: judge0Language.id,
+              status: "Failed",
+            }),
+          );
+          return;
+        }
+
+        const result = (await pollResponse.json()) as {
+          stdout?: string | null;
+          stderr?: string | null;
+          compile_output?: string | null;
+          message?: string | null;
+          status?: { id?: number | null; description?: string | null };
+          time?: string | null;
+          memory?: number | null;
+        };
+
+        const statusId = result.status?.id ?? null;
+        const statusDescription = result.status?.description ?? "Running";
+
+        if (statusId === 1 || statusId === 2) {
+          setExecutionOutput(
+            createEmptyExecutionOutput({
+              fileName: activeFile,
+              language: judge0Language.label,
+              languageId: judge0Language.id,
+              status: statusDescription,
+              statusId,
+            }),
+          );
+          await sleep(pollDelayMs);
+          continue;
+        }
+
+        setExecutionOutput(
+          createEmptyExecutionOutput({
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+            compileOutput: result.compile_output ?? "",
+            message: result.message ?? "",
+            fileName: activeFile,
+            language: judge0Language.label,
+            languageId: judge0Language.id,
+            status: statusDescription,
+            statusId,
+            time: result.time ?? null,
+            memory: result.memory ?? null,
+          }),
+        );
+        return;
+      }
+
+      setExecutionOutput(
+        createEmptyExecutionOutput({
+          errorMessage: "Execution timed out. Please try again.",
+          fileName: activeFile,
+          language: judge0Language.label,
+          languageId: judge0Language.id,
+          status: "Timed out",
+        }),
+      );
+    } catch (error) {
+      console.error("Failed to execute code", error);
+      setExecutionOutput(
+        createEmptyExecutionOutput({
+          errorMessage: "Execution failed. Please try again.",
+          fileName: activeFile,
+          language: judge0Language.label,
+          languageId: judge0Language.id,
+          status: "Failed",
+        }),
+      );
+    } finally {
+      setIsRunning(false);
+    }
+  }, [
+    activeFile,
+    createEmptyExecutionOutput,
+    files,
+    isRunning,
+    resolveJudge0Language,
+    stdinValue,
+  ]);
+
   const activeLanguage = activeFile
     ? resolveLanguage(activeFile, files[activeFile]?.language)
     : "plaintext";
+  const activeLanguageLabel = formatLanguageLabel(activeLanguage);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
@@ -1217,11 +1512,14 @@ const Index = () => {
               openFiles={openFiles}
               activeFile={activeFile}
               language={activeLanguage}
+              languageLabel={activeLanguageLabel}
               remoteCursors={remoteCursors}
               onSelectFile={handleSelectFile}
               onCloseFile={handleCloseFile}
               onCodeChange={handleCodeChange}
               onCursorChange={emitEditorCursor}
+              onRun={handleRun}
+              isRunning={isRunning}
               roomId={currentRoomId}
               isLoading={isLoadingFiles}
             />
@@ -1229,7 +1527,10 @@ const Index = () => {
           <TerminalPanel
             isOpen={terminalOpen}
             onToggle={() => setTerminalOpen(!terminalOpen)}
-            activity={activity}
+            output={executionOutput}
+            isRunning={isRunning}
+            stdin={stdinValue}
+            onStdinChange={setStdinValue}
           />
         </div>
 

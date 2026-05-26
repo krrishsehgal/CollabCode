@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { OnMount } from "@monaco-editor/react";
-import { ChevronDown, Copy, Play, X } from "lucide-react";
+import { ChevronDown, Copy, Loader2, Play, X } from "lucide-react";
 import { motion } from "framer-motion";
 import type { editor as MonacoEditor } from "monaco-editor";
 
@@ -54,8 +54,11 @@ const CodeEditor = ({
   onCodeChange,
   onCursorChange,
   onEditorMount,
+  onRun,
+  isRunning = false,
   roomId = "ab7x-k92m",
   isLoading = false,
+  languageLabel,
 }: {
   files: Record<string, FileEntry>;
   openFiles: string[];
@@ -67,8 +70,11 @@ const CodeEditor = ({
   onCodeChange: (fileName: string, code: string) => void;
   onCursorChange?: (payload: CursorChangePayload) => void;
   onEditorMount?: OnMount;
+  onRun?: () => void;
+  isRunning?: boolean;
   roomId?: string;
   isLoading?: boolean;
+  languageLabel?: string;
 }) => {
   const code = activeFile ? (files[activeFile]?.content ?? "") : "";
   const editorLanguage =
@@ -76,6 +82,7 @@ const CodeEditor = ({
     (activeFile ? files[activeFile]?.language : undefined) ??
     "plaintext";
   const [copied, setCopied] = useState(false);
+  const isRunDisabled = !activeFile || isLoading || !onRun || isRunning;
 
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
@@ -338,13 +345,24 @@ const CodeEditor = ({
 
         <div className="flex items-center gap-2">
           <button className="h-7 px-3 rounded-lg glass text-xs text-muted-foreground hover:text-foreground flex items-center gap-1.5 transition-colors">
-            TypeScript <ChevronDown className="w-3 h-3" />
+            {languageLabel || editorLanguage} <ChevronDown className="w-3 h-3" />
           </button>
           <motion.button
             whileTap={{ scale: 0.95 }}
-            className="h-7 px-4 rounded-lg bg-neon-green/80 text-background text-xs font-medium flex items-center gap-1.5"
+            onClick={() => onRun?.()}
+            disabled={isRunDisabled}
+            className={`h-7 px-4 rounded-lg text-background text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              isRunDisabled
+                ? "bg-neon-green/30 opacity-60 cursor-not-allowed"
+                : "bg-neon-green/80"
+            }`}
           >
-            <Play className="w-3 h-3" /> Run
+            {isRunning ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Play className="w-3 h-3" />
+            )}
+            {isRunning ? "Running..." : "Run"}
           </motion.button>
         </div>
       </div>
@@ -379,7 +397,7 @@ const CodeEditor = ({
       <div className="flex-1 overflow-hidden">
         <div className="relative h-full">
           <Editor
-            value={code}
+            defaultValue={code}
             path={activeFile || "__empty__"}
             language={editorLanguage}
             theme="vs-dark"
