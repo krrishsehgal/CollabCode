@@ -97,6 +97,36 @@ io.on("connection", (socket) => {
     });
   });
 
+  // Handle global cursor movement
+  socket.on("cursor-move", (data) => {
+    const { roomId, userId, displayName, x, y } = data || {};
+    if (!roomId || !userId) return;
+    socket.to(roomId).emit("cursor-update", {
+      userId,
+      displayName,
+      x,
+      y,
+    });
+  });
+
+  socket.on("cursor-leave", (data) => {
+    const { roomId, userId } = data || {};
+    if (!roomId || !userId) return;
+    socket.to(roomId).emit("cursor-left", { userId });
+  });
+
+  socket.on("folder-deleted", (data) => {
+    const { roomId, fileNames } = data || {};
+    if (!roomId || !Array.isArray(fileNames)) return;
+    socket.to(roomId).emit("folder-deleted", { fileNames });
+  });
+
+  socket.on("folder-renamed", (data) => {
+    const { roomId, entries } = data || {};
+    if (!roomId || !Array.isArray(entries)) return;
+    socket.to(roomId).emit("folder-renamed", { entries });
+  });
+
   // Handle collaborative file creation
   socket.on("file-created", (data) => {
     const { roomId, fileName } = data;
