@@ -10,6 +10,11 @@ import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { getDisplayName } from "@/lib/user";
+import {
+  FOLDER_PLACEHOLDER,
+  isPlaceholderFile,
+  normalizePath,
+} from "@/lib/filePaths";
 type ChatMessage = {
   id: string;
   clientMessageId?: string;
@@ -28,6 +33,15 @@ type FileEntry = {
   created_at: number;
   updated_at: number;
   language: string;
+};
+
+type FolderRenameEntry = {
+  from: string;
+  to: string;
+  content: string;
+  language: string;
+  id?: string;
+  updatedAt: number;
 };
 
 type EditorCursor = {
@@ -112,6 +126,20 @@ const Index = () => {
     messages: currentRoomId ? `messages:${currentRoomId}` : "",
     files: currentRoomId ? `files:${currentRoomId}` : "",
   };
+  const normalizeFilePath = useCallback((raw: string) => normalizePath(raw), []);
+  const getVisibleFileNames = useCallback(
+    (fileMap: Record<string, FileEntry>) =>
+      Object.keys(fileMap).filter((name) => !isPlaceholderFile(name)),
+    [],
+  );
+  const getNextActiveFile = useCallback(
+    (fileMap: Record<string, FileEntry>, currentActive: string) => {
+      const visibleNames = getVisibleFileNames(fileMap);
+      if (visibleNames.includes(currentActive)) return currentActive;
+      return visibleNames[0] ?? "";
+    },
+    [getVisibleFileNames],
+  );
   const createClientMessageId = () => {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
       return crypto.randomUUID();
@@ -503,14 +531,16 @@ const Index = () => {
         setFiles(nextFiles);
         persistFiles(nextFiles);
 
-        const fileNames = Object.keys(nextFiles);
+        const fileNames = getVisibleFileNames(nextFiles);
         const currentActive = activeFileRef.current;
         const nextActive = fileNames.includes(currentActive)
           ? currentActive
           : (fileNames[0] ?? "");
         setActiveFile(nextActive);
         setOpenFiles((prev) => {
-          const filtered = prev.filter((name) => name in nextFiles);
+          const filtered = prev.filter(
+            (name) => name in nextFiles && !isPlaceholderFile(name),
+          );
           if (nextActive && !filtered.includes(nextActive)) {
             return [...filtered, nextActive];
           }
@@ -526,7 +556,7 @@ const Index = () => {
         setIsLoadingFiles(false);
       }
     },
-    [createFileEntry, inferLanguageFromFileName, persistFiles],
+    [createFileEntry, getVisibleFileNames, inferLanguageFromFileName, persistFiles],
   );
 
   const loadWorkspace = useCallback(
@@ -707,39 +737,112 @@ const Index = () => {
     [persistFileContent, roomDbId],
   );
 
-  const removeFileFromState = useCallback(
-    (fileName: string) => {
+  const removeFilesFromState = useCallback(
+    (fileNames: string[]) => {
       const currentFiles = filesRef.current;
-      if (!fileName || !(fileName in currentFiles)) return;
-      const { [fileName]: _, ...nextFiles } = currentFiles;
+      const uniqueNames = Array.from(new Set(fileNames)).filter(
+        (name) => name in currentFiles,
+      );
+      if (uniqueNames.length === 0) return;
+
+      const nextFiles = { ...currentFiles };
+      uniqueNames.forEach((name) => {
+        delete nextFiles[name];
+      });
       filesRef.current = nextFiles;
       persistFiles(nextFiles);
       setFiles(nextFiles);
 
-      const remainingNames = Object.keys(nextFiles);
-      const currentActive = activeFileRef.current;
-      const nextActive = remainingNames.includes(currentActive)
-        ? currentActive
-        : (remainingNames[0] ?? "");
+      const nextActive = getNextActiveFile(
+        nextFiles,
+        activeFileRef.current,
+      );
       setActiveFile(nextActive);
       setOpenFiles((prev) => {
-        const filtered = prev.filter((name) => name in nextFiles);
+        const filtered = prev.filter(
+          (name) => name in nextFiles && !isPlaceholderFile(name),
+        );
         if (nextActive && !filtered.includes(nextActive)) {
           return [...filtered, nextActive];
         }
         return filtered;
       });
 
-      const timer = saveTimersRef.current[fileName];
-      if (timer) {
-        window.clearTimeout(timer);
-        delete saveTimersRef.current[fileName];
-      }
-      if (fileName in pendingSavesRef.current) {
-        delete pendingSavesRef.current[fileName];
-      }
+      uniqueNames.forEach((fileName) => {
+        const timer = saveTimersRef.current[fileName];
+        if (timer) {
+          window.clearTimeout(timer);
+          delete saveTimersRef.current[fileName];
+        }
+        if (fileName in pendingSavesRef.current) {
+          delete pendingSavesRef.current[fileName];
+        }
+      });
     },
-    [persistFiles],
+    [getNextActiveFile, persistFiles],
+  );
+
+  const removeFileFromState = useCallback(
+    (fileName: string) => {
+      removeFilesFromState([fileName]);
+    },
+    [removeFilesFromState],
+  );
+
+  const applyFolderRename = useCallback(
+    (entries: FolderRenameEntry[]) => {
+      if (entries.length === 0) return;
+      const currentFiles = filesRef.current;
+      const nextFiles = { ...currentFiles };
+      const renameMap = new Map<string, string>();
+
+      entries.forEach((entry) => {
+        const existing = currentFiles[entry.from];
+        if (!existing) return;
+        renameMap.set(entry.from, entry.to);
+        nextFiles[entry.to] = {
+          ...existing,
+          id: entry.id ?? existing.id,
+          name: entry.to,
+          content: entry.content ?? existing.content,
+          language: entry.language ?? existing.language,
+          updated_at: entry.updatedAt || Date.now(),
+        };
+        delete nextFiles[entry.from];
+
+        const timer = saveTimersRef.current[entry.from];
+        if (timer) {
+          window.clearTimeout(timer);
+          delete saveTimersRef.current[entry.from];
+        }
+        if (entry.from in pendingSavesRef.current) {
+          pendingSavesRef.current[entry.to] = pendingSavesRef.current[entry.from];
+          delete pendingSavesRef.current[entry.from];
+        }
+      });
+
+      filesRef.current = nextFiles;
+      persistFiles(nextFiles);
+      setFiles(nextFiles);
+
+      const nextActiveCandidate =
+        renameMap.get(activeFileRef.current) ?? activeFileRef.current;
+      const nextActive = getNextActiveFile(
+        nextFiles,
+        nextActiveCandidate,
+      );
+      setActiveFile(nextActive);
+      setOpenFiles((prev) => {
+        const mapped = prev
+          .map((name) => renameMap.get(name) ?? name)
+          .filter((name) => name in nextFiles && !isPlaceholderFile(name));
+        if (nextActive && !mapped.includes(nextActive)) {
+          return [...mapped, nextActive];
+        }
+        return mapped;
+      });
+    },
+    [getNextActiveFile, persistFiles],
   );
 
   useEffect(() => {
@@ -801,13 +904,19 @@ const Index = () => {
 
     const handleFileCreated = (fileName: string) => {
       if (!fileName) return;
+      const isPlaceholder = isPlaceholderFile(fileName);
       setFiles((prev) => {
         if (fileName in prev) return prev;
         const next = { ...prev, [fileName]: createFileEntry(fileName, "") };
         persistFiles(next);
         return next;
       });
-      setActivity((prev) => [...prev, `File created: ${fileName}`]);
+      if (isPlaceholder) {
+        const folderPath = fileName.replace(`/${FOLDER_PLACEHOLDER}`, "");
+        setActivity((prev) => [...prev, `Folder created: ${folderPath}`]);
+      } else {
+        setActivity((prev) => [...prev, `File created: ${fileName}`]);
+      }
       scheduleAutoSave(fileName, "");
       if (roomDbId) {
         void (async () => {
@@ -885,6 +994,11 @@ const Index = () => {
     const handleFileDeleted = (fileName: string) => {
       if (!fileName) return;
       removeFileFromState(fileName);
+      if (isPlaceholderFile(fileName)) {
+        const folderPath = fileName.replace(`/${FOLDER_PLACEHOLDER}`, "");
+        setActivity((prev) => [...prev, `Folder deleted: ${folderPath}`]);
+        return;
+      }
       setActivity((prev) => [...prev, `File deleted: ${fileName}`]);
     };
 
@@ -936,12 +1050,37 @@ const Index = () => {
       setActivity((prev) => [...prev, `Message from ${userId}`]);
     };
 
+    const handleFolderDeleted = ({
+      fileNames,
+    }: {
+      fileNames: string[];
+    }) => {
+      if (!Array.isArray(fileNames) || fileNames.length === 0) return;
+      removeFilesFromState(fileNames);
+      setActivity((prev) => [
+        ...prev,
+        `Folder deleted (${fileNames.length} items)`,
+      ]);
+    };
+
+    const handleFolderRenamed = ({
+      entries,
+    }: {
+      entries: FolderRenameEntry[];
+    }) => {
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      applyFolderRename(entries);
+      setActivity((prev) => [...prev, "Folder renamed"]);
+    };
+
     socket.on("file-created", handleFileCreated);
     socket.on("code-update", handleCodeUpdate);
     socket.on("editor-cursor-update", handleEditorCursorUpdate);
     socket.on("file-deleted", handleFileDeleted);
     socket.on("users-updated", handleUsersUpdated);
     socket.on("receive-message", handleReceiveMessage);
+    socket.on("folder-deleted", handleFolderDeleted);
+    socket.on("folder-renamed", handleFolderRenamed);
 
     return () => {
       socket.off("file-created", handleFileCreated);
@@ -950,6 +1089,8 @@ const Index = () => {
       socket.off("file-deleted", handleFileDeleted);
       socket.off("users-updated", handleUsersUpdated);
       socket.off("receive-message", handleReceiveMessage);
+      socket.off("folder-deleted", handleFolderDeleted);
+      socket.off("folder-renamed", handleFolderRenamed);
     };
   }, [
     socket,
@@ -964,6 +1105,8 @@ const Index = () => {
     removeFileFromState,
     syncLocalFileFromRecord,
     upsertFileRecord,
+    applyFolderRename,
+    removeFilesFromState,
   ]);
 
   useEffect(() => {
@@ -986,12 +1129,18 @@ const Index = () => {
     }
 
     const cachedFiles = readLocalFiles();
-    const fileNames = Object.keys(cachedFiles);
+    const fileNames = getVisibleFileNames(cachedFiles);
     const firstFile = fileNames[0] ?? "";
     setFiles(cachedFiles);
     setOpenFiles(firstFile ? [firstFile] : []);
     setActiveFile(firstFile);
-  }, [currentRoomId, normalizeMessage, readLocalFiles, readLocalMessages]);
+  }, [
+    currentRoomId,
+    getVisibleFileNames,
+    normalizeMessage,
+    readLocalFiles,
+    readLocalMessages,
+  ]);
 
   useEffect(() => {
     if (!autoLoadOnOpen) return;
@@ -1046,7 +1195,7 @@ const Index = () => {
   ]);
 
   const handleSelectFile = (name: string) => {
-    if (!(name in files)) return;
+    if (!(name in files) || isPlaceholderFile(name)) return;
     setActiveFile(name);
     if (!openFiles.includes(name)) {
       setOpenFiles((prev) => [...prev, name]);
@@ -1107,21 +1256,50 @@ const Index = () => {
     ],
   );
 
-  const handleCreateFile = () => {
+  const handleCreateFile = (parentPath?: string) => {
     if (!currentRoomId) return;
     const baseName = "untitled";
+    const normalizedParent = parentPath ? normalizeFilePath(parentPath) : "";
     let index = 1;
-    while (`${baseName}-${index}` in files) {
+    const getCandidate = (suffix: number) =>
+      normalizedParent
+        ? `${normalizedParent}/${baseName}-${suffix}`
+        : `${baseName}-${suffix}`;
+    while (getCandidate(index) in filesRef.current) {
       index += 1;
     }
-    const suggestedName = `${baseName}-${index}`;
-    const input = window.prompt("Enter a filename", suggestedName);
+    const suggestedLeaf = `${baseName}-${index}`;
+    const input = window.prompt("Enter a filename", suggestedLeaf);
     if (input === null) {
       return;
     }
-    const name = input.trim();
+    const inputPath = normalizeFilePath(input);
+    const name = normalizedParent
+      ? inputPath.startsWith(`${normalizedParent}/`)
+        ? inputPath
+        : normalizeFilePath(`${normalizedParent}/${inputPath}`)
+      : inputPath;
     if (!name) {
       setActivity((prev) => [...prev, "File creation failed: empty name"]);
+      return;
+    }
+    if (name.endsWith("/")) {
+      setActivity((prev) => [...prev, "File creation failed: invalid name"]);
+      return;
+    }
+    if (isPlaceholderFile(name)) {
+      setActivity((prev) => [...prev, "File creation failed: reserved name"]);
+      return;
+    }
+    if (
+      Object.keys(filesRef.current).some(
+        (existing) => existing !== name && existing.startsWith(`${name}/`),
+      )
+    ) {
+      setActivity((prev) => [
+        ...prev,
+        `File creation failed: ${name} conflicts with folder`,
+      ]);
       return;
     }
     if (name in files) {
@@ -1159,6 +1337,256 @@ const Index = () => {
       })();
     }
   };
+
+  const handleCreateFolder = useCallback(() => {
+    if (!currentRoomId) return;
+    const input = window.prompt("Enter a folder name", "src");
+    if (input === null) {
+      return;
+    }
+    const folderPath = normalizeFilePath(input);
+    if (!folderPath) {
+      setActivity((prev) => [...prev, "Folder creation failed: empty name"]);
+      return;
+    }
+    if (folderPath.endsWith("/") || isPlaceholderFile(folderPath)) {
+      setActivity((prev) => [...prev, "Folder creation failed: invalid name"]);
+      return;
+    }
+    const existingNames = Object.keys(filesRef.current);
+    if (existingNames.includes(folderPath)) {
+      setActivity((prev) => [
+        ...prev,
+        `Folder creation failed: ${folderPath} conflicts with file`,
+      ]);
+      return;
+    }
+    if (existingNames.some((name) => name.startsWith(`${folderPath}/`))) {
+      setActivity((prev) => [
+        ...prev,
+        `Folder creation failed: ${folderPath} exists`,
+      ]);
+      return;
+    }
+    const placeholderName = `${folderPath}/${FOLDER_PLACEHOLDER}`;
+    if (placeholderName in filesRef.current) {
+      setActivity((prev) => [
+        ...prev,
+        `Folder creation failed: ${folderPath} exists`,
+      ]);
+      return;
+    }
+
+    const entry = createFileEntry(placeholderName, "");
+    setFiles((prev) => {
+      if (placeholderName in prev) return prev;
+      const next = { ...prev, [placeholderName]: entry };
+      persistFiles(next);
+      return next;
+    });
+    setActivity((prev) => [...prev, `Folder created: ${folderPath}`]);
+    socket?.emit("file-created", {
+      roomId: currentRoomId,
+      fileName: placeholderName,
+      userId: currentUserId,
+      displayName: currentDisplayName,
+    });
+    scheduleAutoSave(placeholderName, "");
+    if (roomDbId) {
+      void (async () => {
+        try {
+          const record = await upsertFileRecord(placeholderName, "");
+          if (record) {
+            syncLocalFileFromRecord(record);
+          }
+        } catch (error) {
+          console.error("Failed to persist new folder", error);
+          setActivity((prev) => [
+            ...prev,
+            `Folder save failed: ${folderPath}`,
+          ]);
+        }
+      })();
+    }
+  }, [
+    createFileEntry,
+    currentDisplayName,
+    currentRoomId,
+    currentUserId,
+    normalizeFilePath,
+    persistFiles,
+    roomDbId,
+    scheduleAutoSave,
+    socket,
+    syncLocalFileFromRecord,
+    upsertFileRecord,
+  ]);
+
+  const handleDeleteFolder = useCallback(
+    (folderPath: string) => {
+      const normalized = normalizeFilePath(folderPath);
+      if (!normalized) return;
+      const prefix = `${normalized}/`;
+      const fileNames = Object.keys(filesRef.current).filter((name) =>
+        name.startsWith(prefix),
+      );
+      if (fileNames.length === 0) {
+        setActivity((prev) => [...prev, `Folder not found: ${normalized}`]);
+        return;
+      }
+      const shouldDelete = window.confirm(
+        `Delete "${normalized}" and ${fileNames.length} item(s)? This cannot be undone.`,
+      );
+      if (!shouldDelete) return;
+
+      removeFilesFromState(fileNames);
+      setActivity((prev) => [...prev, `Folder deleted: ${normalized}`]);
+
+      socket?.emit("folder-deleted", {
+        roomId: currentRoomId,
+        fileNames,
+        userId: currentUserId,
+        displayName: currentDisplayName,
+      });
+
+      if (roomDbId) {
+        void (async () => {
+          try {
+            const { error } = await supabase
+              .from("files")
+              .delete()
+              .eq("room_id", roomDbId)
+              .in("file_name", fileNames);
+            if (error) {
+              throw error;
+            }
+          } catch (error) {
+            console.error("Failed to delete folder files", error);
+            setActivity((prev) => [
+              ...prev,
+              `Folder delete failed: ${normalized}`,
+            ]);
+          }
+        })();
+      }
+    },
+    [
+      currentDisplayName,
+      currentRoomId,
+      currentUserId,
+      normalizeFilePath,
+      removeFilesFromState,
+      roomDbId,
+      socket,
+    ],
+  );
+
+  const handleRenameFolder = useCallback(
+    (folderPath: string) => {
+      const normalized = normalizeFilePath(folderPath);
+      if (!normalized) return;
+      const currentName = normalized.split("/").pop() ?? normalized;
+      const input = window.prompt("Rename folder", currentName);
+      if (input === null) {
+        return;
+      }
+      const nextPath = normalizeFilePath(input);
+      if (!nextPath) {
+        setActivity((prev) => [...prev, "Folder rename failed: empty name"]);
+        return;
+      }
+      if (isPlaceholderFile(nextPath)) {
+        setActivity((prev) => [...prev, "Folder rename failed: invalid name"]);
+        return;
+      }
+      if (nextPath === normalized) {
+        return;
+      }
+      const prefix = `${normalized}/`;
+      const fileNames = Object.keys(filesRef.current).filter((name) =>
+        name.startsWith(prefix),
+      );
+      if (fileNames.length === 0) {
+        setActivity((prev) => [...prev, `Folder not found: ${normalized}`]);
+        return;
+      }
+      const nextPrefix = `${nextPath}/`;
+      const hasConflict = Object.keys(filesRef.current).some((name) => {
+        if (name.startsWith(prefix)) return false;
+        return name === nextPath || name.startsWith(nextPrefix);
+      });
+      if (hasConflict) {
+        setActivity((prev) => [
+          ...prev,
+          `Folder rename failed: ${nextPath} exists`,
+        ]);
+        return;
+      }
+
+      const entries: FolderRenameEntry[] = fileNames.map((name) => {
+        const entry = filesRef.current[name];
+        return {
+          from: name,
+          to: `${nextPath}/${name.slice(prefix.length)}`,
+          content: entry?.content ?? "",
+          language: entry?.language ?? "plaintext",
+          id: entry?.id,
+          updatedAt: Date.now(),
+        };
+      });
+
+      applyFolderRename(entries);
+      setActivity((prev) => [
+        ...prev,
+        `Folder renamed: ${normalized} → ${nextPath}`,
+      ]);
+
+      socket?.emit("folder-renamed", {
+        roomId: currentRoomId,
+        entries,
+        userId: currentUserId,
+        displayName: currentDisplayName,
+      });
+
+      if (roomDbId) {
+        void (async () => {
+          try {
+            const updatedAt = new Date().toISOString();
+            await Promise.all(
+              entries.map(async (entry) => {
+                const query = supabase
+                  .from("files")
+                  .update({ file_name: entry.to, updated_at: updatedAt });
+                const { error } = entry.id
+                  ? await query.eq("id", entry.id)
+                  : await query
+                      .eq("room_id", roomDbId)
+                      .eq("file_name", entry.from);
+                if (error) {
+                  throw error;
+                }
+              }),
+            );
+          } catch (error) {
+            console.error("Failed to rename folder files", error);
+            setActivity((prev) => [
+              ...prev,
+              `Folder rename failed: ${normalized}`,
+            ]);
+          }
+        })();
+      }
+    },
+    [
+      applyFolderRename,
+      currentDisplayName,
+      currentRoomId,
+      currentUserId,
+      normalizeFilePath,
+      roomDbId,
+      socket,
+    ],
+  );
 
   const emitEditorCursor = useCallback(
     (payload: {
@@ -1492,16 +1920,19 @@ const Index = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar */}
         <div className="w-60 border-r border-glass-border bg-card shrink-0 overflow-hidden">
-          <FileExplorer
-            files={files}
-            activeFile={activeFile}
-            onSelectFile={handleSelectFile}
-            onCreateFile={handleCreateFile}
-            onDeleteFile={handleDeleteFile}
-            onLoadWorkspace={handleLoadWorkspace}
-            isLoadingWorkspace={isLoadingFiles}
-            loadErrorMessage={filesError}
-          />
+              <FileExplorer
+                files={files}
+                activeFile={activeFile}
+                onSelectFile={handleSelectFile}
+                onCreateFile={handleCreateFile}
+                onCreateFolder={handleCreateFolder}
+                onRenameFolder={handleRenameFolder}
+                onDeleteFolder={handleDeleteFolder}
+                onDeleteFile={handleDeleteFile}
+                onLoadWorkspace={handleLoadWorkspace}
+                isLoadingWorkspace={isLoadingFiles}
+                loadErrorMessage={filesError}
+              />
         </div>
 
         {/* Center Editor */}
