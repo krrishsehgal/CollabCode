@@ -38,7 +38,8 @@ export const useSocket = (options?: UseSocketOptions) => {
     }
 
     if (!sharedStore.socket) {
-      sharedStore.socket = io('http://localhost:5000');
+      console.log("Socket URL:", import.meta.env.VITE_SOCKET_URL);
+      sharedStore.socket = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000');
 
       sharedStore.socket.on('connect', () => {
         console.log('Connected to socket server');

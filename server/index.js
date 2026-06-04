@@ -15,7 +15,7 @@ const socketUsers = {};
 
 // Enable CORS for frontend
 const corsOptions = {
-  origin: "http://localhost:8080",
+  origin: ["http://localhost:8080", "https://collab-code-tan.vercel.app"],
   credentials: true,
   methods: ["GET", "POST"],
 };
@@ -83,8 +83,7 @@ io.on("connection", (socket) => {
       lineNumber,
       column,
       isTyping,
-    } =
-      data || {};
+    } = data || {};
     if (!roomId || !userId || !fileName) return;
     if (typeof lineNumber !== "number" || typeof column !== "number") return;
     socket.to(roomId).emit("editor-cursor-update", {
