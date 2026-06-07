@@ -121,11 +121,6 @@ const Index = () => {
   });
   const lastLoadedRoomRef = useRef("");
   const autoLoadAttemptedRef = useRef(false);
-  const autoLoadOnOpen = false;
-  const storageKeys = {
-    messages: currentRoomId ? `messages:${currentRoomId}` : "",
-    files: currentRoomId ? `files:${currentRoomId}` : "",
-  };
   const normalizeFilePath = useCallback((raw: string) => normalizePath(raw), []);
   const getVisibleFileNames = useCallback(
     (fileMap: Record<string, FileEntry>) =>
@@ -284,95 +279,7 @@ const Index = () => {
     }),
     [createFileId, currentRoomId, resolveLanguage, roomDbId],
   );
-  const persistMessages = useCallback(
-    (nextMessages: ChatMessage[]) => {
-      if (!storageKeys.messages || typeof localStorage === "undefined") return;
-      try {
-        localStorage.setItem(
-          storageKeys.messages,
-          JSON.stringify(nextMessages),
-        );
-      } catch (error) {
-        console.error("Failed to cache messages", error);
-      }
-    },
-    [storageKeys.messages],
-  );
-  const persistFiles = useCallback(
-    (nextFiles: Record<string, FileEntry>) => {
-      if (!storageKeys.files || typeof localStorage === "undefined") return;
-      try {
-        localStorage.setItem(storageKeys.files, JSON.stringify(nextFiles));
-      } catch (error) {
-        console.error("Failed to cache files", error);
-      }
-    },
-    [storageKeys.files],
-  );
 
-  const readLocalMessages = useCallback((): ChatMessage[] => {
-    if (!storageKeys.messages || typeof localStorage === "undefined") {
-      return [];
-    }
-    try {
-      const raw = localStorage.getItem(storageKeys.messages);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as ChatMessage[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.error("Failed to read cached messages", error);
-      return [];
-    }
-  }, [storageKeys.messages]);
-
-  const readLocalFiles = useCallback((): Record<string, FileEntry> => {
-    if (!storageKeys.files || typeof localStorage === "undefined") {
-      return {};
-    }
-    try {
-      const raw = localStorage.getItem(storageKeys.files);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw) as Record<string, FileEntry | string>;
-      if (!parsed || typeof parsed !== "object") return {};
-      const next: Record<string, FileEntry> = {};
-      Object.entries(parsed).forEach(([name, value]) => {
-        if (typeof value === "string") {
-          next[name] = createFileEntry(name, value);
-          return;
-        }
-        if (value && typeof value === "object") {
-          const file = value as Partial<FileEntry>;
-          const normalizedName =
-            typeof file.name === "string" && file.name.trim().length > 0
-              ? file.name
-              : name;
-          next[normalizedName] = createFileEntry(
-            normalizedName,
-            typeof file.content === "string" ? file.content : "",
-            {
-              id: typeof file.id === "string" ? file.id : undefined,
-              room_id:
-                typeof file.room_id === "string" ? file.room_id : undefined,
-              created_at:
-                typeof file.created_at === "number"
-                  ? file.created_at
-                  : undefined,
-              updated_at:
-                typeof file.updated_at === "number"
-                  ? file.updated_at
-                  : undefined,
-              language:
-                typeof file.language === "string" ? file.language : undefined,
-            },
-          );
-        }
-      });
-      return next;
-    } catch (error) {
-      console.error("Failed to read cached files", error);
-      return {};
-    }
-  }, [createFileEntry, storageKeys.files]);
 
   const normalizeMessage = useCallback(
     (message: ChatMessage) => ({
@@ -400,7 +307,6 @@ const Index = () => {
             (a, b) =>
               new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
           );
-          persistMessages(next);
           return next;
         }
         const next = [...prev, normalized];
@@ -408,11 +314,10 @@ const Index = () => {
           (a, b) =>
             new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
         );
-        persistMessages(next);
         return next;
       });
     },
-    [normalizeMessage, persistMessages],
+    [normalizeMessage],
   );
 
   useEffect(() => {
@@ -529,7 +434,28 @@ const Index = () => {
         });
 
         setFiles(nextFiles);
-        persistFiles(nextFiles);
+
+        // Fetch room messages from Supabase
+        const { data: remoteMessages, error: messagesError } = await supabase
+          .from("messages")
+          .select("id, room_id, user_id, display_name, message, created_at")
+          .eq("room_id", resolvedRoomId)
+          .order("created_at", { ascending: true });
+
+        if (messagesError) {
+          throw messagesError;
+        }
+
+        const nextMessages: ChatMessage[] = (remoteMessages ?? []).map((msg) => ({
+          id: msg.id,
+          roomId: msg.room_id,
+          userId: msg.user_id,
+          displayName: msg.display_name ?? "",
+          message: msg.message ?? "",
+          createdAt: msg.created_at,
+        }));
+
+        setMessages(nextMessages);
 
         const fileNames = getVisibleFileNames(nextFiles);
         const currentActive = activeFileRef.current;
@@ -556,7 +482,7 @@ const Index = () => {
         setIsLoadingFiles(false);
       }
     },
-    [createFileEntry, getVisibleFileNames, inferLanguageFromFileName, persistFiles],
+    [createFileEntry, getVisibleFileNames],
   );
 
   const loadWorkspace = useCallback(
@@ -658,12 +584,10 @@ const Index = () => {
           language: resolveLanguage(fileName, record.language ?? prev[fileName].language),
           updated_at: updatedAt,
         };
-        const next = { ...prev, [fileName]: nextEntry };
-        persistFiles(next);
-        return next;
+        return { ...prev, [fileName]: nextEntry };
       });
     },
-    [persistFiles, resolveLanguage],
+    [resolveLanguage],
   );
 
   const persistFileContent = useCallback(
@@ -750,7 +674,6 @@ const Index = () => {
         delete nextFiles[name];
       });
       filesRef.current = nextFiles;
-      persistFiles(nextFiles);
       setFiles(nextFiles);
 
       const nextActive = getNextActiveFile(
@@ -779,7 +702,7 @@ const Index = () => {
         }
       });
     },
-    [getNextActiveFile, persistFiles],
+    [getNextActiveFile],
   );
 
   const removeFileFromState = useCallback(
@@ -822,7 +745,6 @@ const Index = () => {
       });
 
       filesRef.current = nextFiles;
-      persistFiles(nextFiles);
       setFiles(nextFiles);
 
       const nextActiveCandidate =
@@ -842,7 +764,7 @@ const Index = () => {
         return mapped;
       });
     },
-    [getNextActiveFile, persistFiles],
+    [getNextActiveFile],
   );
 
   useEffect(() => {
@@ -887,16 +809,13 @@ const Index = () => {
         const nextEntry = existing
           ? { ...existing, content: code, updated_at: Date.now() }
           : createFileEntry(fileName, code);
-        const next = { ...prev, [fileName]: nextEntry };
-        persistFiles(next);
-        return next;
+        return { ...prev, [fileName]: nextEntry };
       });
       if (nextActivity) {
         setActivity((prev) => [...prev, nextActivity]);
       }
-      scheduleAutoSave(fileName, code);
     },
-    [createFileEntry, persistFiles, scheduleAutoSave],
+    [createFileEntry],
   );
 
   useEffect(() => {
@@ -907,28 +826,13 @@ const Index = () => {
       const isPlaceholder = isPlaceholderFile(fileName);
       setFiles((prev) => {
         if (fileName in prev) return prev;
-        const next = { ...prev, [fileName]: createFileEntry(fileName, "") };
-        persistFiles(next);
-        return next;
+        return { ...prev, [fileName]: createFileEntry(fileName, "") };
       });
       if (isPlaceholder) {
         const folderPath = fileName.replace(`/${FOLDER_PLACEHOLDER}`, "");
         setActivity((prev) => [...prev, `Folder created: ${folderPath}`]);
       } else {
         setActivity((prev) => [...prev, `File created: ${fileName}`]);
-      }
-      scheduleAutoSave(fileName, "");
-      if (roomDbId) {
-        void (async () => {
-          try {
-            const record = await upsertFileRecord(fileName, "");
-            if (record) {
-              syncLocalFileFromRecord(record);
-            }
-          } catch (error) {
-            console.error("Failed to sync new file", error);
-          }
-        })();
       }
     };
 
@@ -1099,7 +1003,6 @@ const Index = () => {
     currentRoomId,
     upsertMessage,
     createFileEntry,
-    persistFiles,
     roomDbId,
     scheduleAutoSave,
     removeFileFromState,
@@ -1122,76 +1025,18 @@ const Index = () => {
     pendingSavesRef.current = {};
     lastLoadedRoomRef.current = "";
     autoLoadAttemptedRef.current = false;
-
-    const cachedMessages = readLocalMessages();
-    if (cachedMessages.length > 0) {
-      setMessages(cachedMessages.map(normalizeMessage));
-    }
-
-    const cachedFiles = readLocalFiles();
-    const fileNames = getVisibleFileNames(cachedFiles);
-    const firstFile = fileNames[0] ?? "";
-    setFiles(cachedFiles);
-    setOpenFiles(firstFile ? [firstFile] : []);
-    setActiveFile(firstFile);
-  }, [
-    currentRoomId,
-    getVisibleFileNames,
-    normalizeMessage,
-    readLocalFiles,
-    readLocalMessages,
-  ]);
+  }, [currentRoomId]);
 
   useEffect(() => {
-    if (!autoLoadOnOpen) return;
     if (!currentRoomId || !currentUserId) return;
     if (autoLoadAttemptedRef.current || hasLoadedWorkspace) return;
     autoLoadAttemptedRef.current = true;
     void loadWorkspace();
   }, [
-    autoLoadOnOpen,
     currentRoomId,
     currentUserId,
     hasLoadedWorkspace,
     loadWorkspace,
-  ]);
-
-  useEffect(() => {
-    if (!currentRoomId) return;
-    const handleStorage = (event: StorageEvent) => {
-      if (event.storageArea !== localStorage) return;
-      if (event.key === storageKeys.messages) {
-        const nextMessages = readLocalMessages();
-        setMessages(nextMessages.map(normalizeMessage));
-        return;
-      }
-      if (event.key === storageKeys.files) {
-        const nextFiles = readLocalFiles();
-        const fileNames = Object.keys(nextFiles);
-        const nextActive = fileNames.includes(activeFile)
-          ? activeFile
-          : (fileNames[0] ?? "");
-        setFiles(nextFiles);
-        setActiveFile(nextActive);
-        setOpenFiles((prev) => {
-          const filtered = prev.filter((name) => name in nextFiles);
-          if (nextActive && !filtered.includes(nextActive)) {
-            return [...filtered, nextActive];
-          }
-          return filtered;
-        });
-      }
-    };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, [
-    activeFile,
-    currentRoomId,
-    normalizeMessage,
-    readLocalFiles,
-    readLocalMessages,
-    storageKeys.files,
-    storageKeys.messages,
   ]);
 
   const handleSelectFile = (name: string) => {
@@ -1310,9 +1155,7 @@ const Index = () => {
     const entry = createFileEntry(name, "");
     setFiles((prev) => {
       if (name in prev) return prev;
-      const next = { ...prev, [name]: entry };
-      persistFiles(next);
-      return next;
+      return { ...prev, [name]: entry };
     });
     setActiveFile(name);
     setOpenFiles((prev) => (prev.includes(name) ? prev : [...prev, name]));
@@ -1380,9 +1223,7 @@ const Index = () => {
     const entry = createFileEntry(placeholderName, "");
     setFiles((prev) => {
       if (placeholderName in prev) return prev;
-      const next = { ...prev, [placeholderName]: entry };
-      persistFiles(next);
-      return next;
+      return { ...prev, [placeholderName]: entry };
     });
     setActivity((prev) => [...prev, `Folder created: ${folderPath}`]);
     socket?.emit("file-created", {
@@ -1414,7 +1255,6 @@ const Index = () => {
     currentRoomId,
     currentUserId,
     normalizeFilePath,
-    persistFiles,
     roomDbId,
     scheduleAutoSave,
     socket,
@@ -1647,9 +1487,7 @@ const Index = () => {
       const nextEntry = existing
         ? { ...existing, content: code, updated_at: Date.now() }
         : createFileEntry(fileName, code);
-      const next = { ...prev, [fileName]: nextEntry };
-      persistFiles(next);
-      return next;
+      return { ...prev, [fileName]: nextEntry };
     });
     socket?.emit("code-change", {
       roomId: currentRoomId,
@@ -1689,6 +1527,39 @@ const Index = () => {
       message,
       clientMessageId,
     });
+
+    if (roomDbId) {
+      try {
+        const { data, error } = await supabase
+          .from("messages")
+          .insert({
+            room_id: roomDbId,
+            user_id: currentUserId,
+            display_name: currentDisplayName,
+            message,
+          })
+          .select("id, room_id, user_id, display_name, message, created_at")
+          .single();
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          upsertMessage({
+            id: data.id,
+            clientMessageId,
+            roomId: data.room_id,
+            userId: data.user_id,
+            displayName: data.display_name ?? "",
+            message: data.message ?? "",
+            createdAt: data.created_at,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to save message to database:", error);
+      }
+    }
   };
 
   const createEmptyExecutionOutput = useCallback(
