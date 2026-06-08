@@ -9,6 +9,12 @@ import TerminalPanel from "@/components/collabcode/Terminal";
 import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import {
+  loadRoomFiles,
+  loadRoomMessages,
+  resolveRoomRecord,
+  saveRoomMessage,
+} from "@/lib/roomData";
 import { getDisplayName } from "@/lib/user";
 import {
   FOLDER_PLACEHOLDER,
@@ -24,6 +30,8 @@ type ChatMessage = {
   message: string;
   createdAt: string;
 };
+
+type ChatLoadState = "idle" | "loading" | "ready" | "empty" | "error";
 
 type FileEntry = {
   id: string;
@@ -87,7 +95,8 @@ const Index = () => {
   const [roomDbId, setRoomDbId] = useState("");
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [filesError, setFilesError] = useState("");
-  const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
+  const [chatLoadState, setChatLoadState] = useState<ChatLoadState>("idle");
+  const [chatLoadError, setChatLoadError] = useState("");
   const [users, setUsers] = useState<
     Array<{ userId: string; displayName: string }>
   >([]);
@@ -107,9 +116,11 @@ const Index = () => {
   const [stdinValue, setStdinValue] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const filesRef = useRef<Record<string, FileEntry>>({});
+  const messagesRef = useRef<ChatMessage[]>([]);
   const saveTimersRef = useRef<Record<string, number>>({});
   const pendingSavesRef = useRef<Record<string, string>>({});
   const activeFileRef = useRef(activeFile);
+  const roomResolutionPromiseRef = useRef<Promise<string> | null>(null);
   const cursorEmitRef = useRef<{
     lastEmit: number;
     timer: number | null;
@@ -121,7 +132,10 @@ const Index = () => {
   });
   const lastLoadedRoomRef = useRef("");
   const autoLoadAttemptedRef = useRef(false);
-  const normalizeFilePath = useCallback((raw: string) => normalizePath(raw), []);
+  const normalizeFilePath = useCallback(
+    (raw: string) => normalizePath(raw),
+    [],
+  );
   const getVisibleFileNames = useCallback(
     (fileMap: Record<string, FileEntry>) =>
       Object.keys(fileMap).filter((name) => !isPlaceholderFile(name)),
@@ -141,6 +155,30 @@ const Index = () => {
     }
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   };
+
+  const ensureRoomDbId = useCallback(async () => {
+    if (!currentRoomId || !currentUserId) return "";
+    if (roomDbId) return roomDbId;
+    if (roomResolutionPromiseRef.current) {
+      const pendingRoomId = await roomResolutionPromiseRef.current;
+      return pendingRoomId;
+    }
+
+    roomResolutionPromiseRef.current = (async () => {
+      const room = await resolveRoomRecord(currentRoomId, currentUserId);
+      return room.id;
+    })();
+
+    try {
+      const resolvedRoomId = await roomResolutionPromiseRef.current;
+      if (resolvedRoomId) {
+        setRoomDbId(resolvedRoomId);
+      }
+      return resolvedRoomId;
+    } finally {
+      roomResolutionPromiseRef.current = null;
+    }
+  }, [currentRoomId, currentUserId, roomDbId]);
   const createFileId = useCallback(() => {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
       return crypto.randomUUID();
@@ -202,10 +240,7 @@ const Index = () => {
   }, []);
   const resolveJudge0Language = useCallback((fileName: string) => {
     const extension = fileName.split(".").pop()?.toLowerCase();
-    const languages: Record<
-      string,
-      { id: number; label: string }
-    > = {
+    const languages: Record<string, { id: number; label: string }> = {
       ts: { id: 101, label: "TypeScript" },
       tsx: { id: 101, label: "TypeScript" },
       js: { id: 93, label: "JavaScript" },
@@ -280,44 +315,71 @@ const Index = () => {
     [createFileId, currentRoomId, resolveLanguage, roomDbId],
   );
 
-
   const normalizeMessage = useCallback(
     (message: ChatMessage) => ({
       ...message,
       displayName:
-        message.userId === currentUserId ? "You" : message.displayName,
+        message.userId === currentUserId
+          ? "You"
+          : message.displayName || message.userId.slice(0, 6),
     }),
     [currentUserId],
   );
 
-  const upsertMessage = useCallback(
-    (message: ChatMessage) => {
-      setMessages((prev) => {
-        const matchIndex = prev.findIndex(
-          (item) =>
-            item.id === message.id ||
-            (message.clientMessageId &&
-              item.clientMessageId === message.clientMessageId),
-        );
-        const normalized = normalizeMessage(message);
-        if (matchIndex >= 0) {
-          const next = [...prev];
-          next[matchIndex] = { ...next[matchIndex], ...normalized };
-          next.sort(
-            (a, b) =>
-              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-          );
-          return next;
+  const getChatMatchIndex = useCallback(
+    (items: ChatMessage[], message: ChatMessage) => {
+      const incomingTime = new Date(message.createdAt).getTime();
+      return items.findIndex((item) => {
+        if (item.id === message.id) {
+          return true;
         }
-        const next = [...prev, normalized];
-        next.sort(
-          (a, b) =>
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-        );
-        return next;
+        if (
+          message.clientMessageId &&
+          item.clientMessageId === message.clientMessageId
+        ) {
+          return true;
+        }
+        if (
+          !message.clientMessageId &&
+          item.clientMessageId &&
+          item.userId === message.userId &&
+          item.message === message.message
+        ) {
+          const itemTime = new Date(item.createdAt).getTime();
+          return Math.abs(itemTime - incomingTime) <= 10000;
+        }
+        return false;
       });
     },
-    [normalizeMessage],
+    [],
+  );
+
+  const mergeChatMessages = useCallback(
+    (baseMessages: ChatMessage[], incomingMessages: ChatMessage[]) => {
+      const next = [...baseMessages];
+      incomingMessages.forEach((message) => {
+        const normalized = normalizeMessage(message);
+        const matchIndex = getChatMatchIndex(next, normalized);
+        if (matchIndex >= 0) {
+          next[matchIndex] = { ...next[matchIndex], ...normalized };
+          return;
+        }
+        next.push(normalized);
+      });
+      next.sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+      return next;
+    },
+    [getChatMatchIndex, normalizeMessage],
+  );
+
+  const upsertMessage = useCallback(
+    (message: ChatMessage) => {
+      setMessages((prev) => mergeChatMessages(prev, [message]));
+    },
+    [mergeChatMessages],
   );
 
   useEffect(() => {
@@ -328,68 +390,21 @@ const Index = () => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
 
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const hydrateFilesFromRoom = useCallback(
-    async (roomCode: string, userId: string) => {
+    async () => {
       setIsLoadingFiles(true);
       setFilesError("");
       try {
-        const { data: existingRoom, error: roomError } = await supabase
-          .from("rooms")
-          .select("id, room_code")
-          .eq("room_code", roomCode)
-          .maybeSingle();
-
-        if (roomError) {
-          throw roomError;
-        }
-
-        let resolvedRoomId = existingRoom?.id ?? "";
+        const resolvedRoomId = await ensureRoomDbId();
         if (!resolvedRoomId) {
-          const { data: newRoom, error: createRoomError } = await supabase
-            .from("rooms")
-            .insert({
-              room_code: roomCode,
-              created_by: userId,
-            })
-            .select("id, room_code")
-            .single();
-
-          if (createRoomError) {
-            throw createRoomError;
-          }
-
-          resolvedRoomId = newRoom.id;
-          console.debug("Resolved room (created)", {
-            roomCode,
-            roomId: resolvedRoomId,
-          });
-        } else {
-          console.debug("Resolved room", {
-            roomCode: existingRoom?.room_code ?? roomCode,
-            roomId: resolvedRoomId,
-          });
+          return false;
         }
+        const remoteFiles = await loadRoomFiles(resolvedRoomId);
 
-        setRoomDbId(resolvedRoomId);
-
-        const { data: remoteFiles, error: filesError } = await supabase
-          .from("files")
-          .select("id, room_id, file_name, language, content, updated_at")
-          .eq("room_id", resolvedRoomId)
-          .order("updated_at", { ascending: true });
-
-        if (filesError) {
-          throw filesError;
-        }
-
-        console.debug("Fetched files", {
-          roomId: resolvedRoomId,
-          count: remoteFiles?.length ?? 0,
-          files: remoteFiles?.map((file) => file.file_name),
-        });
-        console.debug("Fetched DB rows", remoteFiles ?? []);
-
-        const contentByName: Record<string, string> = {};
         const nextFiles: Record<string, FileEntry> = {};
         const usedNames = new Set<string>();
         const ensureUniqueName = (rawName: string) => {
@@ -409,7 +424,7 @@ const Index = () => {
           return candidate;
         };
 
-        (remoteFiles ?? []).forEach((file) => {
+        remoteFiles.forEach((file) => {
           const originalName = file.file_name || "untitled";
           const fileName = ensureUniqueName(originalName);
           usedNames.add(fileName);
@@ -417,7 +432,6 @@ const Index = () => {
           const updatedAt = file.updated_at
             ? new Date(file.updated_at).getTime()
             : Date.now();
-          contentByName[fileName] = content;
           nextFiles[fileName] = createFileEntry(fileName, content, {
             id: file.id,
             room_id: file.room_id,
@@ -427,35 +441,8 @@ const Index = () => {
           });
         });
 
-        console.debug("Final files object before setFiles", contentByName);
-        console.debug("Files state update", {
-          roomId: resolvedRoomId,
-          fileCount: Object.keys(nextFiles).length,
-        });
-
         setFiles(nextFiles);
-
-        // Fetch room messages from Supabase
-        const { data: remoteMessages, error: messagesError } = await supabase
-          .from("messages")
-          .select("id, room_id, user_id, display_name, message, created_at")
-          .eq("room_id", resolvedRoomId)
-          .order("created_at", { ascending: true });
-
-        if (messagesError) {
-          throw messagesError;
-        }
-
-        const nextMessages: ChatMessage[] = (remoteMessages ?? []).map((msg) => ({
-          id: msg.id,
-          roomId: msg.room_id,
-          userId: msg.user_id,
-          displayName: msg.display_name ?? "",
-          message: msg.message ?? "",
-          createdAt: msg.created_at,
-        }));
-
-        setMessages(nextMessages);
+        console.log("[files] loaded", Object.keys(nextFiles).length);
 
         const fileNames = getVisibleFileNames(nextFiles);
         const currentActive = activeFileRef.current;
@@ -474,7 +461,7 @@ const Index = () => {
         });
         return true;
       } catch (error) {
-        console.error("Failed to load files from Supabase", error);
+        console.error("[supabase]", error);
         setFilesError("Failed to load files from Supabase.");
         setActivity((prev) => [...prev, "File sync error: load failed"]);
         return false;
@@ -482,8 +469,40 @@ const Index = () => {
         setIsLoadingFiles(false);
       }
     },
-    [createFileEntry, getVisibleFileNames],
+    [createFileEntry, ensureRoomDbId, getVisibleFileNames],
   );
+
+  const hydrateChatHistoryFromRoom = useCallback(async () => {
+    setChatLoadState("loading");
+    setChatLoadError("");
+    try {
+      const resolvedRoomId = await ensureRoomDbId();
+      if (!resolvedRoomId) {
+        return false;
+      }
+
+      const remoteMessages = await loadRoomMessages(resolvedRoomId);
+      const nextMessages: ChatMessage[] = remoteMessages.map((msg) => ({
+        id: msg.id,
+        roomId: msg.room_id ?? resolvedRoomId,
+        userId: msg.user_id ?? "",
+        displayName: msg.display_name ?? "",
+        message: msg.message ?? "",
+        createdAt: msg.created_at,
+      }));
+      const mergedMessages = mergeChatMessages(messagesRef.current, nextMessages);
+
+      setMessages(mergedMessages);
+      setChatLoadState(mergedMessages.length === 0 ? "empty" : "ready");
+      console.log("[chat] loaded", nextMessages.length);
+      return true;
+    } catch (error) {
+      console.error("[supabase]", error);
+      setChatLoadError("Failed to load chat history from database.");
+      setChatLoadState("error");
+      return false;
+    }
+  }, [ensureRoomDbId, mergeChatMessages]);
 
   const loadWorkspace = useCallback(
     async (options?: { force?: boolean }) => {
@@ -492,10 +511,9 @@ const Index = () => {
       if (!options?.force && lastLoadedRoomRef.current === currentRoomId) {
         return;
       }
-      const didLoad = await hydrateFilesFromRoom(currentRoomId, currentUserId);
+      const didLoad = await hydrateFilesFromRoom();
       if (didLoad) {
         lastLoadedRoomRef.current = currentRoomId;
-        setHasLoadedWorkspace(true);
       }
     },
     [currentRoomId, currentUserId, hydrateFilesFromRoom, isLoadingFiles],
@@ -581,7 +599,10 @@ const Index = () => {
           id: record.id,
           room_id: record.room_id,
           content: record.content ?? prev[fileName].content,
-          language: resolveLanguage(fileName, record.language ?? prev[fileName].language),
+          language: resolveLanguage(
+            fileName,
+            record.language ?? prev[fileName].language,
+          ),
           updated_at: updatedAt,
         };
         return { ...prev, [fileName]: nextEntry };
@@ -676,10 +697,7 @@ const Index = () => {
       filesRef.current = nextFiles;
       setFiles(nextFiles);
 
-      const nextActive = getNextActiveFile(
-        nextFiles,
-        activeFileRef.current,
-      );
+      const nextActive = getNextActiveFile(nextFiles, activeFileRef.current);
       setActiveFile(nextActive);
       setOpenFiles((prev) => {
         const filtered = prev.filter(
@@ -739,7 +757,8 @@ const Index = () => {
           delete saveTimersRef.current[entry.from];
         }
         if (entry.from in pendingSavesRef.current) {
-          pendingSavesRef.current[entry.to] = pendingSavesRef.current[entry.from];
+          pendingSavesRef.current[entry.to] =
+            pendingSavesRef.current[entry.from];
           delete pendingSavesRef.current[entry.from];
         }
       });
@@ -749,10 +768,7 @@ const Index = () => {
 
       const nextActiveCandidate =
         renameMap.get(activeFileRef.current) ?? activeFileRef.current;
-      const nextActive = getNextActiveFile(
-        nextFiles,
-        nextActiveCandidate,
-      );
+      const nextActive = getNextActiveFile(nextFiles, nextActiveCandidate);
       setActiveFile(nextActive);
       setOpenFiles((prev) => {
         const mapped = prev
@@ -928,37 +944,37 @@ const Index = () => {
     };
 
     const handleReceiveMessage = ({
+      id,
       userId,
       displayName,
       message,
       clientMessageId,
+      createdAt,
     }: {
+      id?: string;
       userId: string;
       displayName: string;
       message: string;
       clientMessageId?: string;
+      createdAt?: string;
     }) => {
       if (userId === currentUserId) {
         return;
       }
-      const createdAt = new Date().toISOString();
+      const nextCreatedAt = createdAt ?? new Date().toISOString();
       upsertMessage({
-        id: clientMessageId ?? `${userId}-${createdAt}`,
+        id: id ?? clientMessageId ?? `${userId}-${nextCreatedAt}`,
         clientMessageId,
         roomId: currentRoomId,
         userId,
         displayName,
         message,
-        createdAt,
+        createdAt: nextCreatedAt,
       });
       setActivity((prev) => [...prev, `Message from ${userId}`]);
     };
 
-    const handleFolderDeleted = ({
-      fileNames,
-    }: {
-      fileNames: string[];
-    }) => {
+    const handleFolderDeleted = ({ fileNames }: { fileNames: string[] }) => {
       if (!Array.isArray(fileNames) || fileNames.length === 0) return;
       removeFilesFromState(fileNames);
       setActivity((prev) => [
@@ -1015,27 +1031,31 @@ const Index = () => {
   useEffect(() => {
     if (!currentRoomId) return;
     setMessages([]);
+    messagesRef.current = [];
     setFiles({});
     setOpenFiles([]);
     setActiveFile("");
     setRoomDbId("");
     setFilesError("");
-    setHasLoadedWorkspace(false);
+    setChatLoadState("idle");
+    setChatLoadError("");
     setRemoteCursors({});
     pendingSavesRef.current = {};
     lastLoadedRoomRef.current = "";
     autoLoadAttemptedRef.current = false;
+    roomResolutionPromiseRef.current = null;
   }, [currentRoomId]);
 
   useEffect(() => {
     if (!currentRoomId || !currentUserId) return;
-    if (autoLoadAttemptedRef.current || hasLoadedWorkspace) return;
+    if (autoLoadAttemptedRef.current) return;
     autoLoadAttemptedRef.current = true;
     void loadWorkspace();
+    void hydrateChatHistoryFromRoom();
   }, [
     currentRoomId,
     currentUserId,
-    hasLoadedWorkspace,
+    hydrateChatHistoryFromRoom,
     loadWorkspace,
   ]);
 
@@ -1242,10 +1262,7 @@ const Index = () => {
           }
         } catch (error) {
           console.error("Failed to persist new folder", error);
-          setActivity((prev) => [
-            ...prev,
-            `Folder save failed: ${folderPath}`,
-          ]);
+          setActivity((prev) => [...prev, `Folder save failed: ${folderPath}`]);
         }
       })();
     }
@@ -1520,45 +1537,41 @@ const Index = () => {
       createdAt: new Date().toISOString(),
     };
     upsertMessage(optimisticMessage);
-    socket?.emit("send-message", {
-      roomId: currentRoomId,
-      userId: currentUserId,
-      displayName: currentDisplayName,
-      message,
-      clientMessageId,
-    });
 
-    if (roomDbId) {
-      try {
-        const { data, error } = await supabase
-          .from("messages")
-          .insert({
-            room_id: roomDbId,
-            user_id: currentUserId,
-            display_name: currentDisplayName,
-            message,
-          })
-          .select("id, room_id, user_id, display_name, message, created_at")
-          .single();
-
-        if (error) {
-          throw error;
-        }
-
-        if (data) {
-          upsertMessage({
-            id: data.id,
-            clientMessageId,
-            roomId: data.room_id,
-            userId: data.user_id,
-            displayName: data.display_name ?? "",
-            message: data.message ?? "",
-            createdAt: data.created_at,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to save message to database:", error);
+    try {
+      const resolvedRoomId = roomDbId || (await ensureRoomDbId());
+      if (!resolvedRoomId) {
+        return;
       }
+
+      const savedMessage = await saveRoomMessage(
+        resolvedRoomId,
+        currentUserId,
+        currentDisplayName,
+        message,
+      );
+
+      upsertMessage({
+        id: savedMessage.id,
+        clientMessageId,
+        roomId: savedMessage.room_id ?? resolvedRoomId,
+        userId: savedMessage.user_id ?? currentUserId,
+        displayName: savedMessage.display_name ?? currentDisplayName,
+        message: savedMessage.message,
+        createdAt: savedMessage.created_at,
+      });
+
+      socket?.emit("send-message", {
+        id: savedMessage.id,
+        roomId: resolvedRoomId,
+        userId: currentUserId,
+        displayName: currentDisplayName,
+        message: savedMessage.message,
+        clientMessageId,
+        createdAt: savedMessage.created_at,
+      });
+    } catch (error) {
+      console.error("[supabase]", error);
     }
   };
 
@@ -1791,19 +1804,19 @@ const Index = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar */}
         <div className="w-60 border-r border-glass-border bg-card shrink-0 overflow-hidden">
-              <FileExplorer
-                files={files}
-                activeFile={activeFile}
-                onSelectFile={handleSelectFile}
-                onCreateFile={handleCreateFile}
-                onCreateFolder={handleCreateFolder}
-                onRenameFolder={handleRenameFolder}
-                onDeleteFolder={handleDeleteFolder}
-                onDeleteFile={handleDeleteFile}
-                onLoadWorkspace={handleLoadWorkspace}
-                isLoadingWorkspace={isLoadingFiles}
-                loadErrorMessage={filesError}
-              />
+          <FileExplorer
+            files={files}
+            activeFile={activeFile}
+            onSelectFile={handleSelectFile}
+            onCreateFile={handleCreateFile}
+            onCreateFolder={handleCreateFolder}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onDeleteFile={handleDeleteFile}
+            onLoadWorkspace={handleLoadWorkspace}
+            isLoadingWorkspace={isLoadingFiles}
+            loadErrorMessage={filesError}
+          />
         </div>
 
         {/* Center Editor */}
@@ -1839,7 +1852,12 @@ const Index = () => {
         {/* Right Sidebar */}
         <div className="w-60 border-l border-glass-border bg-card shrink-0 flex flex-col overflow-hidden">
           <ActiveUsers users={users} currentUserId={currentUserId} />
-          <ChatPanel messages={messages} onSendMessage={handleSendMessage} />
+          <ChatPanel
+            messages={messages}
+            loadState={chatLoadState}
+            loadErrorMessage={chatLoadError}
+            onSendMessage={handleSendMessage}
+          />
         </div>
       </div>
     </div>

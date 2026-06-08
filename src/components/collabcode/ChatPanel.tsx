@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
 import { useState } from "react";
 import { motion } from "framer-motion";
 
@@ -12,12 +12,18 @@ interface ChatMessage {
 
 const ChatPanel = ({
   messages,
+  loadState,
+  loadErrorMessage,
   onSendMessage,
 }: {
   messages: ChatMessage[];
+  loadState: "idle" | "loading" | "ready" | "empty" | "error";
+  loadErrorMessage?: string;
   onSendMessage: (message: string) => void;
 }) => {
   const [message, setMessage] = useState("");
+  const isLoadingHistory =
+    (loadState === "loading" || loadState === "idle") && messages.length === 0;
 
   const handleSend = () => {
     const trimmedMessage = message.trim();
@@ -29,11 +35,22 @@ const ChatPanel = ({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <div className="p-3 border-b border-glass-border">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Chat</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Chat
+        </span>
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-3">
-        {messages.length === 0 ? (
+        {isLoadingHistory ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Loading chat history...
+          </div>
+        ) : loadState === "error" && messages.length === 0 ? (
+          <div className="text-xs text-destructive">
+            {loadErrorMessage || "Failed to load chat history."}
+          </div>
+        ) : messages.length === 0 ? (
           <div className="text-xs text-muted-foreground">No messages yet</div>
         ) : (
           messages.map((msg, i) => (
@@ -45,7 +62,10 @@ const ChatPanel = ({
             >
               <div>
                 <p className="text-sm text-secondary-foreground mt-0.5">
-                  <span className="text-xs font-medium text-neon-blue">{msg.displayName}</span>: {msg.message}
+                  <span className="text-xs font-medium text-neon-blue">
+                    {msg.displayName}
+                  </span>
+                  : {msg.message}
                 </p>
               </div>
             </motion.div>
