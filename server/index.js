@@ -142,12 +142,23 @@ io.on("connection", (socket) => {
 
   // Handle chat messages
   socket.on("send-message", (data) => {
-    const { roomId, userId, displayName, message, clientMessageId } = data;
-    io.to(roomId).emit("receive-message", {
+    const {
+      id,
+      roomId,
       userId,
       displayName,
       message,
       clientMessageId,
+      createdAt,
+    } = data;
+    io.to(roomId).emit("receive-message", {
+      id,
+      roomId,
+      userId,
+      displayName,
+      message,
+      clientMessageId,
+      createdAt,
     });
   });
 
